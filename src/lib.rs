@@ -93,7 +93,7 @@ impl VirtualTexture {
 
     #[inline]
     fn tile_backing_size(&self) -> u32 {
-        self.tile_size /*+ 2*/
+        self.tile_size + 2
     }
 
     #[inline]

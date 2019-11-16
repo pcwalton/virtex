@@ -11,10 +11,12 @@ use pathfinder_gpu::resources::{FilesystemResourceLoader, ResourceLoader};
 use pathfinder_gpu::{BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps, Device};
 use pathfinder_gpu::{Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat};
 use pathfinder_gpu::{UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
-use raqote::{DrawTarget, IntRect, Transform};
+use raqote::{DrawTarget, IntRect, SolidSource, Transform};
 use resvg::{Options as ResvgOptions, ScreenSize};
 use resvg::backend_raqote;
 use resvg::usvg::{Options as UsvgOptions, Tree};
+use std::env;
+use std::slice;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
 use virtex::VirtualTexture;
@@ -30,9 +32,12 @@ const CACHE_TILES_ACROSS: u32 = 16;
 const CACHE_TILES_DOWN: u32 = 16;
 const CACHE_TILE_COUNT: u32 = CACHE_TILES_ACROSS * CACHE_TILES_DOWN;
 const TILE_SIZE: u32 = 256;
-const TILE_CACHE_WIDTH: u32 = CACHE_TILES_ACROSS * TILE_SIZE;
-const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_SIZE;
-const GLOBAL_SCALE_FACTOR: f32 = 5.0;
+const TILE_BACKING_SIZE: u32 = 258;
+const TILE_CACHE_WIDTH: u32 = CACHE_TILES_ACROSS * TILE_BACKING_SIZE;
+const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_BACKING_SIZE;
+const DEFAULT_GLOBAL_SCALE_FACTOR: f32 = 5.0;
+
+static BACKGROUND_COLOR: SolidSource = SolidSource { r: 255, g: 255, b: 255, a: 255 };
 
 static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
 static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
@@ -40,7 +45,17 @@ static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
 static DEFAULT_SVG_PATH: &'static str = "resources/svg/Ghostscript_Tiger.svg";
 
 fn main() {
-    let svg_tree = Tree::from_file(&DEFAULT_SVG_PATH, &UsvgOptions::default()).unwrap();
+    let svg_path = match env::args().nth(1) {
+        Some(path) => path,
+        None => DEFAULT_SVG_PATH.to_owned(),
+    };
+
+    let global_scale_factor: f32 = match env::args().nth(2) {
+        None => DEFAULT_GLOBAL_SCALE_FACTOR,
+        Some(factor) => factor.parse().unwrap(),
+    };
+
+    let svg_tree = Tree::from_file(&svg_path, &UsvgOptions::default()).unwrap();
     let svg_size = svg_tree.svg_node().size;
     let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
     let svg_screen_size = ScreenSize::new(svg_size.x() as u32, svg_size.y() as u32).unwrap();
@@ -88,7 +103,12 @@ fn main() {
     // Initialize the cache.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
     let cache_texture = device.create_texture(TextureFormat::RGBA8, cache_texture_size);
-    let mut cache_draw_target = DrawTarget::new(cache_texture_size.x(), cache_texture_size.y());
+    let mut cache_pixels =
+        vec![0; cache_texture_size.x() as usize * cache_texture_size.y() as usize];
+    let mut cache_draw_target =
+        DrawTarget::new(TILE_BACKING_SIZE as i32, TILE_BACKING_SIZE as i32);
+
+    // Initialize the virtual texture.
     let virtual_texture = VirtualTexture::new(svg_size, cache_texture_size, TILE_SIZE);
     let mut manager = VirtualTextureManager2D::new(virtual_texture, physical_window_size);
 
@@ -105,18 +125,13 @@ fn main() {
                 let descriptor = &tile_cache_entry.descriptor;
                 let scene_offset = Vector2F::new(descriptor.x as f32,
                                                  descriptor.y as f32).scale(-(TILE_SIZE as f32));
-                let scale = (1 << descriptor.lod) as f32 * GLOBAL_SCALE_FACTOR;
-
-                let address = tile_cache_entry.address;
-                let tile_offset = address.0.scale(TILE_SIZE as i32);
-                let tile_max_point = tile_offset + Vector2I::splat(TILE_SIZE as i32);
-                let tile_clip_rect = IntRect::new(to_euclid_point_i32(tile_offset),
-                                                  to_euclid_point_i32(tile_max_point));
+                let scale = (1 << descriptor.lod) as f32 * global_scale_factor;
 
                 let mut transform = Transform2F::default();
                 transform = Transform2F::from_uniform_scale(scale) * transform;
                 transform = Transform2F::from_translation(scene_offset) * transform;
-                transform = Transform2F::from_translation(tile_offset.to_f32()) * transform;
+                transform = Transform2F::from_translation(Vector2F::splat(1.0)) * transform;
+                //transform = Transform2F::from_translation(tile_offset.to_f32()) * transform;
 
                 println!("... transform={:?}", transform);
                 cache_draw_target.set_transform(&Transform::row_major(transform.matrix.m11(),
@@ -125,18 +140,30 @@ fn main() {
                                                                       transform.matrix.m22(),
                                                                       transform.vector.x(),
                                                                       transform.vector.y()));
-                cache_draw_target.push_clip_rect(tile_clip_rect);
+                cache_draw_target.clear(BACKGROUND_COLOR);
                 backend_raqote::render_to_canvas(&svg_tree,
                                                  &ResvgOptions::default(),
                                                  svg_screen_size,
                                                  &mut cache_draw_target);
-                cache_draw_target.pop_clip();
                 cache_draw_target.set_transform(&Transform::identity());
+
+                let address = tile_cache_entry.address;
+                let tile_offset = address.0.scale(TILE_BACKING_SIZE as i32);
+                let tile_size = Vector2I::splat(TILE_BACKING_SIZE as i32);
+
+                blit(&mut cache_pixels,
+                     cache_texture_size.x() as usize,
+                     RectI::new(tile_offset, tile_size),
+                     cache_draw_target.get_data(),
+                     TILE_BACKING_SIZE as usize,
+                     Vector2I::default());
             }
             //cache_draw_target.write_png("cache.png").unwrap();
-            device.upload_to_texture(&cache_texture,
-                                     cache_texture_size,
-                                     cache_draw_target.get_data_u8_mut());
+            unsafe {
+                let cache_pixels: &[u8] = slice::from_raw_parts(cache_pixels.as_ptr() as *const u8,
+                                                                cache_pixels.len() * 4);
+                device.upload_to_texture(&cache_texture, cache_texture_size, cache_pixels);
+            }
         }
 
         device.begin_commands();
@@ -161,11 +188,14 @@ fn main() {
                 let tile_size = TILE_SIZE as f32 / (1 << render_lod) as f32;
                 let tile_rect = RectF::new(tile_position, Vector2F::splat(1.0)).scale(tile_size);
 
-                let cache_tex_scale = Vector2F::new(1.0 / CACHE_TILES_ACROSS as f32,
-                                                    1.0 / CACHE_TILES_DOWN as f32);
-                let tile_tex_origin = tile_cache_entry.address.0.to_f32();
+                let tile_tex_origin = Vector2I::splat(1) +
+                    tile_cache_entry.address.0.scale(TILE_BACKING_SIZE as i32);
+                let tile_tex_size = Vector2I::splat(TILE_SIZE as i32);
+
+                let cache_tex_scale = Vector2F::new(1.0 / TILE_CACHE_WIDTH as f32,
+                                                    1.0 / TILE_CACHE_HEIGHT as f32);
                 let tile_tex_rect =
-                    RectF::new(tile_tex_origin, Vector2F::splat(1.0)).scale_xy(cache_tex_scale);
+                    RectI::new(tile_tex_origin, tile_tex_size).to_f32().scale_xy(cache_tex_scale);
 
                 //println!("tile_tex_rect={:?}", tile_tex_rect);
                 device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {
@@ -230,9 +260,9 @@ fn main() {
                     ..
                 } => {
                     if delta.y > 0.0 { 
-                        manager.transform = manager.transform.scale(Vector2F::splat(1.05))
+                        manager.transform = manager.transform.scale(Vector2F::splat(1.025))
                     } else if delta.y < 0.0 {
-                        manager.transform = manager.transform.scale(Vector2F::splat(0.95))
+                        manager.transform = manager.transform.scale(Vector2F::splat(0.975))
                     }
                 }
                 Event::WindowEvent {
@@ -335,6 +365,24 @@ impl RenderProgram {
             translation_uniform,
             tile_cache_uniform,
             opacity_uniform,
+        }
+    }
+}
+
+fn blit(dest: &mut [u32],
+        dest_stride: usize,
+        dest_rect: RectI,
+        src: &[u32],
+        src_stride: usize,
+        src_origin: Vector2I) {
+    for y in 0..dest_rect.size().y() {
+        let dest_start = (dest_rect.origin().y() + y) as usize * dest_stride +
+            dest_rect.origin().x() as usize;
+        let src_start = (src_origin.y() + y) as usize * src_stride + src_origin.x() as usize;
+        for x in 0..dest_rect.size().x() {
+            let pixel = src[src_start + x as usize];
+            dest[dest_start + x as usize] =
+                (pixel & 0x00ff00ff).rotate_right(16) | (pixel & 0xff00ff00);
         }
     }
 }
