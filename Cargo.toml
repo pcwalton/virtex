@@ -1,0 +1,43 @@
+[package]
+name = "virtex"
+version = "0.1.0"
+authors = ["Patrick Walton <pcwalton@mimiga.net>"]
+edition = "2018"
+
+[dependencies]
+arrayvec = "0.5"
+
+[dependencies.pathfinder_geometry]
+path = "../pathfinder/geometry"
+
+[dev-dependencies]
+gl = "0.6"
+
+[dev-dependencies.euclid]
+version = "0.20"
+features = []
+
+[dev-dependencies.pathfinder_content]
+path = "../pathfinder/content"
+
+[dev-dependencies.pathfinder_gl]
+path = "../pathfinder/gl"
+
+[dev-dependencies.pathfinder_gpu]
+path = "../pathfinder/gpu"
+
+[dev-dependencies.pathfinder_simd]
+path = "../pathfinder/simd"
+
+[dev-dependencies.raqote]
+version = "0.6"
+
+[dev-dependencies.resvg]
+version = "0.8"
+features = ["raqote-backend"]
+
+[dev-dependencies.surfman]
+path = "../surfman/surfman"
+
+[dev-dependencies.winit]
+version = "<0.19.4" # 0.19.4 causes build errors https://github.com/rust-windowing/winit/pull/1105
