@@ -7,24 +7,20 @@ edition = "2018"
 [dependencies]
 arrayvec = "0.5"
 
+[dependencies.pathfinder_content]
+path = "../pathfinder/content"
+
 [dependencies.pathfinder_geometry]
 path = "../pathfinder/geometry"
+
+[dependencies.pathfinder_gpu]
+path = "../pathfinder/gpu"
 
 [dev-dependencies]
 gl = "0.6"
 
-[dev-dependencies.euclid]
-version = "0.20"
-features = []
-
-[dev-dependencies.pathfinder_content]
-path = "../pathfinder/content"
-
 [dev-dependencies.pathfinder_gl]
 path = "../pathfinder/gl"
-
-[dev-dependencies.pathfinder_gpu]
-path = "../pathfinder/gpu"
 
 [dev-dependencies.pathfinder_simd]
 path = "../pathfinder/simd"

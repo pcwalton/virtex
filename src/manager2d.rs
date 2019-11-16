@@ -49,10 +49,13 @@ impl VirtualTextureManager2D {
         }
     }
 
+    #[inline]
+    pub fn viewport_size(&self) -> Vector2I {
+        self.viewport_size
+    }
+
     fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileCacheEntry>, lod: i32) {
         let viewport_rect = RectF::new(Vector2F::default(), self.viewport_size.to_f32());
-        let texture_rect = RectF::new(Vector2F::default(),
-                                      self.texture.virtual_texture_size.to_f32());
         let transformed_viewport_rect = self.transform.inverse() * viewport_rect;
         let tile_size_inv = ((1 << lod) as f32) / self.texture.tile_size as f32;
         let tile_space_rect = transformed_viewport_rect.scale(tile_size_inv).round_out().to_i32();
