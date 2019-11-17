@@ -1,4 +1,4 @@
-// virtex/src/render_simple.rs
+// virtex/src/renderer_simple.rs
 
 use crate::manager2d::VirtualTextureManager2D;
 
@@ -6,14 +6,16 @@ use pathfinder_content::color::ColorF;
 use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use pathfinder_gpu::resources::ResourceLoader;
-use pathfinder_gpu::{BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps, Device, Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat, UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
+use pathfinder_gpu::{BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps, Device};
+use pathfinder_gpu::{Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat};
+use pathfinder_gpu::{UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
 
 static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
 static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
 
 pub struct SimpleRenderer<D> where D: Device {
     manager: VirtualTextureManager2D,
-    render_vertex_array: RenderVertexArray<D>,
+    render_vertex_array: RenderSimpleVertexArray<D>,
     cache_texture: D::Texture,
 }
 
@@ -22,7 +24,7 @@ impl<D> SimpleRenderer<D> where D: Device {
                -> SimpleRenderer<D> {
         let cache_texture = device.create_texture(TextureFormat::RGBA8,
                                                   manager.texture.cache_texture_size());
-        let render_vertex_array = RenderVertexArray::new(device, resource_loader);
+        let render_vertex_array = RenderSimpleVertexArray::new(device, resource_loader);
         SimpleRenderer { manager, render_vertex_array, cache_texture }
     }
 
@@ -123,8 +125,8 @@ impl<D> SimpleRenderer<D> where D: Device {
     }
 }
 
-struct RenderVertexArray<D> where D: Device {
-    render_program: RenderProgram<D>,
+struct RenderSimpleVertexArray<D> where D: Device {
+    render_program: RenderSimpleProgram<D>,
     vertex_array: D::VertexArray,
     #[allow(dead_code)]
     quad_vertex_positions_buffer: D::Buffer,
@@ -132,9 +134,9 @@ struct RenderVertexArray<D> where D: Device {
     quad_vertex_indices_buffer: D::Buffer,
 }
 
-impl<D> RenderVertexArray<D> where D: Device {
-    fn new(device: &D, resources: &dyn ResourceLoader) -> RenderVertexArray<D> {
-        let render_program = RenderProgram::new(device, resources);
+impl<D> RenderSimpleVertexArray<D> where D: Device {
+    fn new(device: &D, resources: &dyn ResourceLoader) -> RenderSimpleVertexArray<D> {
+        let render_program = RenderSimpleProgram::new(device, resources);
         let vertex_array = device.create_vertex_array();
         let quad_vertex_positions_buffer = device.create_buffer();
         device.allocate_buffer(&quad_vertex_positions_buffer,
@@ -159,7 +161,7 @@ impl<D> RenderVertexArray<D> where D: Device {
                                          divisor: 0,
                                          buffer_index: 0,
                                      });
-        RenderVertexArray {
+        RenderSimpleVertexArray {
             render_program,
             vertex_array,
             quad_vertex_positions_buffer,
@@ -168,7 +170,7 @@ impl<D> RenderVertexArray<D> where D: Device {
     }
 }
 
-struct RenderProgram<D> where D: Device {
+struct RenderSimpleProgram<D> where D: Device {
     program: D::Program,
     position_attribute: D::VertexAttr,
     tile_rect_uniform: D::Uniform,
@@ -180,9 +182,9 @@ struct RenderProgram<D> where D: Device {
     opacity_uniform: D::Uniform,
 }
 
-impl<D> RenderProgram<D> where D: Device {
-    fn new(device: &D, resources: &dyn ResourceLoader) -> RenderProgram<D> {
-        let program = device.create_program(resources, "render");
+impl<D> RenderSimpleProgram<D> where D: Device {
+    fn new(device: &D, resources: &dyn ResourceLoader) -> RenderSimpleProgram<D> {
+        let program = device.create_program(resources, "render_simple");
         let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
         let tile_rect_uniform = device.get_uniform(&program, "TileRect");
         let tile_tex_rect_uniform = device.get_uniform(&program, "TileTexRect");
@@ -191,7 +193,7 @@ impl<D> RenderProgram<D> where D: Device {
         let translation_uniform = device.get_uniform(&program, "Translation");
         let tile_cache_uniform = device.get_uniform(&program, "TileCache");
         let opacity_uniform = device.get_uniform(&program, "Opacity");
-        RenderProgram {
+        RenderSimpleProgram {
             program,
             position_attribute,
             tile_rect_uniform,

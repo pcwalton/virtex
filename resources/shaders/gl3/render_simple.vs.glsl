@@ -1,6 +1,6 @@
 #version 330
 
-// virtex/resources/shaders/render.vs.glsl
+// virtex/resources/shaders/render_simple.vs.glsl
 
 uniform vec4 uTileRect;
 uniform vec4 uTileTexRect;

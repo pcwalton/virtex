@@ -1,6 +1,6 @@
 #version 330
 
-// virtex/resources/shaders/render.fs.glsl
+// virtex/resources/shaders/render_simple.fs.glsl
 
 uniform sampler2D uTileCache;
 uniform float uOpacity;
