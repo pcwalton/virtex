@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::collections::hash_map::HashMap;
 
 pub mod manager2d;
+pub mod renderer_advanced;
 pub mod renderer_simple;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Debug)]
@@ -106,6 +107,11 @@ impl VirtualTexture {
     #[inline]
     pub fn cache_texture_size(&self) -> Vector2I {
         self.cache_texture_size
+    }
+
+    #[inline]
+    pub fn cache_size(&self) -> u32 {
+        self.tile_texture_tiles_across() * self.tile_texture_tiles_down()
     }
 
     #[inline]

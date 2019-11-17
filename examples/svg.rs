@@ -15,7 +15,7 @@ use std::slice;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
 use virtex::manager2d::VirtualTextureManager2D;
-use virtex::renderer_simple::SimpleRenderer;
+use virtex::renderer_advanced::AdvancedRenderer;
 use virtex::{TileCacheEntry, VirtualTexture};
 use winit::dpi::LogicalSize;
 use winit::{DeviceEvent, Event, EventsLoop, KeyboardInput, ModifiersState, MouseScrollDelta};
@@ -50,6 +50,7 @@ fn main() {
     let svg_tree = Tree::from_file(&svg_path, &UsvgOptions::default()).unwrap();
     let svg_size = svg_tree.svg_node().size;
     let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
+    let svg_size = svg_size.scale(global_scale_factor as i32);
 
     let mut event_loop = EventsLoop::new();
     let dpi = event_loop.get_primary_monitor().get_hidpi_factor() as f32;
@@ -100,7 +101,7 @@ fn main() {
     // Initialize the virtual texture.
     let virtual_texture = VirtualTexture::new(svg_size, cache_texture_size, TILE_SIZE);
     let manager = VirtualTextureManager2D::new(virtual_texture, physical_window_size);
-    let mut renderer = SimpleRenderer::new(&device, manager, &resources);
+    let mut renderer = AdvancedRenderer::new(&device, manager, &resources);
 
     let mut exit = false;
     let mut needed_tiles = vec![];
@@ -166,7 +167,7 @@ fn main() {
 }
 
 fn rasterize_needed_tiles(device: &GLDevice,
-                          renderer: &mut SimpleRenderer<GLDevice>,
+                          renderer: &mut AdvancedRenderer<GLDevice>,
                           global_scale_factor: f32,
                           cache_draw_target: &mut DrawTarget,
                           cache_pixels: &mut [u32],
