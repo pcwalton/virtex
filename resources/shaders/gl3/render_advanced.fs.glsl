@@ -11,6 +11,8 @@ in vec2 vTexCoord;
 out vec4 cFragColor;
 
 void main() {
+    1.0 / dFdx(vTexCoord.x);
+
     vec2 neededTileOrigin = floor(vTexCoord);
 
     // FIXME(pcwalton): Optimize this.
