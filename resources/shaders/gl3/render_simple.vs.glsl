@@ -2,6 +2,8 @@
 
 // virtex/resources/shaders/render_simple.vs.glsl
 
+precision highp float;
+
 uniform vec4 uTileRect;
 uniform vec4 uTileTexRect;
 uniform vec2 uFramebufferSize;

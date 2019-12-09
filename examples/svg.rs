@@ -108,7 +108,8 @@ fn main() {
 
     while !exit {
         println!("--- begin frame ---");
-        renderer.manager_mut().request_needed_tiles(&mut needed_tiles);
+        //renderer.manager_mut().request_needed_tiles(&mut needed_tiles);
+        renderer.prepare(&device, &mut needed_tiles);
         rasterize_needed_tiles(&device,
                                &mut renderer,
                                global_scale_factor,

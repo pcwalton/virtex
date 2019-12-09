@@ -5,7 +5,6 @@
 precision highp float;
 
 uniform vec4 uQuadRect;
-uniform vec2 uQuadTexScale;
 uniform vec2 uFramebufferSize;
 uniform mat2 uTransform;
 uniform vec2 uTranslation;

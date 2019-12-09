@@ -16,14 +16,14 @@ path = "../pathfinder/geometry"
 [dependencies.pathfinder_gpu]
 path = "../pathfinder/gpu"
 
+[dependencies.pathfinder_simd]
+path = "../pathfinder/simd"
+
 [dev-dependencies]
 gl = "0.6"
 
 [dev-dependencies.pathfinder_gl]
 path = "../pathfinder/gl"
-
-[dev-dependencies.pathfinder_simd]
-path = "../pathfinder/simd"
 
 [dev-dependencies.raqote]
 version = "0.6"

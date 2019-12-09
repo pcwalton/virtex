@@ -1,6 +1,6 @@
 #version 330
 
-// virtex/resources/shaders/render_advanced.vs.glsl
+// virtex/resources/shaders/render_advanced.fs.glsl
 
 precision highp float;
 
@@ -20,7 +20,7 @@ float getMipLevel(vec2 texCoord) {
 }
 
 void main() {
-    float neededMipLevel = ceil(getMipLevel(vTexCoord));
+    float neededMipLevel = max(ceil(getMipLevel(vTexCoord)), 0.0);
     vec2 scaledTexCoord = vTexCoord * pow(2.0, neededMipLevel) / uTileSize;
     vec2 neededTileOrigin = floor(scaledTexCoord);
 
@@ -28,7 +28,7 @@ void main() {
     int tileIndex = 0;
     while (tileIndex < uCacheSize) {
         vec4 tileMetadata = texelFetch(uMetadata, ivec2(tileIndex, 0), 0);
-        if (tileMetadata.xy == neededTileOrigin && tileMetadata.z == neededMipLevel)
+        if (tileMetadata.xyz == vec3(neededTileOrigin, neededMipLevel))
             break;
         tileIndex++;
     }
