@@ -3,7 +3,7 @@
 use crate::manager2d::VirtualTextureManager2D;
 
 use pathfinder_content::color::ColorF;
-use pathfinder_geometry::rect::RectI;
+use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use pathfinder_gpu::resources::ResourceLoader;
 use pathfinder_gpu::{BufferData, BufferTarget, BufferUploadMode, ClearOps, Device, Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat, UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
@@ -47,14 +47,21 @@ impl<D> AdvancedRenderer<D> where D: Device {
         let metadata_texture_size = Vector2I::new(cache_size, 2);
         let metadata_stride = metadata_texture_size.x() as usize * 4;
         let mut metadata = vec![0.0; metadata_stride * metadata_texture_size.y() as usize];
-        let cache_texture_scale =
-            Vector2F::new(1.0 / self.manager.texture.tile_texture_tiles_across() as f32,
-                          1.0 / self.manager.texture.tile_texture_tiles_down() as f32);
+
+        let cache_texture_size = self.manager.texture.cache_texture_size().to_f32();
+        let cache_texture_scale = Vector2F::new(1.0 / cache_texture_size.x(),
+                                                1.0 / cache_texture_size.y());
+
+        let tile_size = self.manager.texture.tile_size() as f32;
+        let tile_backing_size = self.manager.texture.tile_backing_size() as f32;
+
         for (cache_index, tile_descriptor) in self.manager.texture.lru.iter().enumerate() {
             let tile_address = self.manager.texture.cache.get(&tile_descriptor).unwrap();
-            let tile_rect =
-                RectI::new(tile_address.0, Vector2I::splat(1)).to_f32()
-                                                              .scale_xy(cache_texture_scale);
+
+            let tile_origin = tile_address.0.to_f32().scale(tile_backing_size);
+            let tile_rect = RectF::new(tile_origin + Vector2F::splat(1.0),
+                                       Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
+
             metadata[metadata_stride * 0 + cache_index * 4 + 0] = tile_descriptor.x as f32;
             metadata[metadata_stride * 0 + cache_index * 4 + 1] = tile_descriptor.y as f32;
             metadata[metadata_stride * 0 + cache_index * 4 + 2] = tile_descriptor.lod as f32;
