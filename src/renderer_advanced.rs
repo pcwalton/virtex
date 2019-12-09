@@ -57,6 +57,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
                                                               .scale_xy(cache_texture_scale);
             metadata[metadata_stride * 0 + cache_index * 4 + 0] = tile_descriptor.x as f32;
             metadata[metadata_stride * 0 + cache_index * 4 + 1] = tile_descriptor.y as f32;
+            metadata[metadata_stride * 0 + cache_index * 4 + 2] = tile_descriptor.lod as f32;
             metadata[metadata_stride * 1 + cache_index * 4 + 0] = tile_rect.origin().x();
             metadata[metadata_stride * 1 + cache_index * 4 + 1] = tile_rect.origin().y();
             metadata[metadata_stride * 1 + cache_index * 4 + 2] = tile_rect.max_x();
@@ -73,8 +74,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
 
         let quad_rect =
             RectI::new(Vector2I::default(), self.manager.texture.virtual_texture_size).to_f32();
-        let quad_tex_scale = quad_rect.size().scale(1.0 / self.manager.texture.tile_size as f32);
-        println!("quad_rect={:?} quad_tex_scale={:?}", quad_rect, quad_tex_scale);
+        let tile_size = Vector2F::splat(self.manager.texture.tile_size() as f32);
+        println!("quad_rect={:?} tile_size={:?}", quad_rect, tile_size);
 
         device.begin_commands();
         device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {
@@ -85,8 +86,6 @@ impl<D> AdvancedRenderer<D> where D: Device {
             uniforms: &[
                 (&self.render_vertex_array.render_program.quad_rect_uniform,
                  UniformData::Vec4(quad_rect.0)),
-                (&self.render_vertex_array.render_program.quad_tex_scale_uniform,
-                 UniformData::Vec2(quad_tex_scale.0)),
                 (&self.render_vertex_array.render_program.framebuffer_size_uniform,
                  UniformData::Vec2(self.manager.viewport_size().to_f32().0)),
                 (&self.render_vertex_array.render_program.transform_uniform,
@@ -99,6 +98,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
                  UniformData::TextureUnit(1)),
                 (&self.render_vertex_array.render_program.cache_size_uniform,
                  UniformData::Int(cache_size)),
+                (&self.render_vertex_array.render_program.tile_size_uniform,
+                 UniformData::Vec2(tile_size.0)),
             ],
             textures: &[&self.metadata_texture, &self.cache_texture],
             viewport: RectI::new(Vector2I::splat(0), self.manager.viewport_size()),
@@ -163,13 +164,13 @@ struct RenderAdvancedProgram<D> where D: Device {
     program: D::Program,
     position_attribute: D::VertexAttr,
     quad_rect_uniform: D::Uniform,
-    quad_tex_scale_uniform: D::Uniform,
     framebuffer_size_uniform: D::Uniform,
     transform_uniform: D::Uniform,
     translation_uniform: D::Uniform,
     metadata_uniform: D::Uniform,
     tile_cache_uniform: D::Uniform,
     cache_size_uniform: D::Uniform,
+    tile_size_uniform: D::Uniform,
 }
 
 impl<D> RenderAdvancedProgram<D> where D: Device {
@@ -177,24 +178,24 @@ impl<D> RenderAdvancedProgram<D> where D: Device {
         let program = device.create_program(resources, "render_advanced");
         let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
         let quad_rect_uniform = device.get_uniform(&program, "QuadRect");
-        let quad_tex_scale_uniform = device.get_uniform(&program, "QuadTexScale");
         let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
         let transform_uniform = device.get_uniform(&program, "Transform");
         let translation_uniform = device.get_uniform(&program, "Translation");
         let metadata_uniform = device.get_uniform(&program, "Metadata");
         let tile_cache_uniform = device.get_uniform(&program, "TileCache");
         let cache_size_uniform = device.get_uniform(&program, "CacheSize");
+        let tile_size_uniform = device.get_uniform(&program, "TileSize");
         RenderAdvancedProgram {
             program,
             position_attribute,
             quad_rect_uniform,
-            quad_tex_scale_uniform,
             framebuffer_size_uniform,
             transform_uniform,
             translation_uniform,
             metadata_uniform,
             tile_cache_uniform,
             cache_size_uniform,
+            tile_size_uniform,
         }
     }
 }
