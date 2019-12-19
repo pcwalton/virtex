@@ -42,8 +42,8 @@ const MESH_CENTER_Y:        f32 = MESH_PATCHES_DOWN as f32 * 0.5;
 const GRAVITY: f32 = 0.003;
 const SPRING:  f32 = -0.2;
 
-const DEBUG_POSITION_SCALE: f32 = 0.03;
-const DEBUG_VIEWPORT_SCALE: i32 = 7;
+const DEBUG_POSITION_SCALE: f32 = 0.1;
+const DEBUG_VIEWPORT_SCALE: i32 = 5;
 
 static QUAD_VERTEX_POSITIONS: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 static QUAD_INDICES:          [u32; 6] = [0, 1, 2, 1, 3, 2];
@@ -95,17 +95,8 @@ fn main() {
     let device = GLDevice::new(GLVersion::GL3, default_framebuffer_object);
     let resources = FilesystemResourceLoader::locate();
 
-    // Create the vertex position LUT data.
-    let mut vertex_positions = Vec::with_capacity(MESH_VERTEX_COUNT as usize * 4);
-    for y in 0..MESH_VERTICES_DOWN {
-        for x in 0..MESH_VERTICES_ACROSS {
-            vertex_positions.extend_from_slice(&[x as f32, y as f32, 0.0, 0.0]);
-        }
-    }
-
     // Create the vertex position LUT textures.
-    //
-    // FIXME(pcwalton): Use RG32F or RG16F.
+    let vertex_positions = [0.0; MESH_VERTEX_COUNT as usize * 4];
     let vertex_position_texture_size = Vector2I::new(MESH_VERTICES_ACROSS, MESH_VERTICES_DOWN);
     let vertex_position_texture =
         device.create_texture_from_data(TextureFormat::RGBA32F,
@@ -307,7 +298,6 @@ fn main() {
             }
         });
 
-        /*
         // Draw the debug LUT visualization.
         device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
             target: &RenderTarget::Default,
@@ -323,7 +313,6 @@ fn main() {
                                  vertex_position_texture_size.scale(DEBUG_VIEWPORT_SCALE)),
             options: RenderOptions::default(),
         });
-        */
 
         // Submit commands.
         device.end_commands();

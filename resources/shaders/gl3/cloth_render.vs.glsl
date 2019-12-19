@@ -11,7 +11,7 @@ uniform vec2 uVertexPositionsSize;
 in vec2 aPosition;
 
 void main() {
-    vec3 position = texture(uVertexPositions, (aPosition + 0.5) / uVertexPositionsSize).xyz;
-    vec4 ndcPosition = uTransform * vec4(position, 1.0);
+    vec3 displacement = texture(uVertexPositions, (aPosition + 0.5) / uVertexPositionsSize).xyz;
+    vec4 ndcPosition = uTransform * vec4(displacement + vec3(aPosition, 0.0), 1.0);
     gl_Position = ndcPosition;
 }
