@@ -6,7 +6,10 @@ use pathfinder_geometry::transform3d::Transform4F;
 use pathfinder_geometry::vector::{Vector2F, Vector2I, Vector3F, Vector4F};
 use pathfinder_gl::{GLDevice, GLProgram, GLUniform, GLVersion, GLVertexAttr};
 use pathfinder_gpu::resources::{FilesystemResourceLoader, ResourceLoader};
-use pathfinder_gpu::{BlendFunc, BlendOp, BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps, Device, Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat, TextureDataRef, UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
+use pathfinder_gpu::{BlendFunc, BlendOp, BlendState, BufferData, BufferTarget, BufferUploadMode};
+use pathfinder_gpu::{ClearOps, Device, Primitive, RenderOptions, RenderState, RenderTarget};
+use pathfinder_gpu::{TextureFormat, TextureDataRef, UniformData, VertexAttrClass};
+use pathfinder_gpu::{VertexAttrDescriptor, VertexAttrType};
 use pathfinder_simd::default::F32x4;
 use std::f32::consts::FRAC_PI_2;
 use std::mem;
@@ -38,6 +41,9 @@ const MESH_CENTER_Y:        f32 = MESH_PATCHES_DOWN as f32 * 0.5;
 
 const GRAVITY: f32 = 0.003;
 const SPRING:  f32 = -0.2;
+
+const DEBUG_POSITION_SCALE: f32 = 0.03;
+const DEBUG_VIEWPORT_SCALE: i32 = 7;
 
 static QUAD_VERTEX_POSITIONS: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 static QUAD_INDICES:          [u32; 6] = [0, 1, 2, 1, 3, 2];
@@ -115,10 +121,9 @@ fn main() {
     let mut last_vertex_position_framebuffer =
         device.create_framebuffer(last_vertex_position_texture);
 
-    // Create the cloth update program.
+    // Create the cloth programs.
     let cloth_update_program = ClothUpdateProgram::new(&device, &resources);
-
-    // Create the cloth render program.
+    let cloth_debug_lut_program = ClothDebugLUTProgram::new(&device, &resources);
     let cloth_render_program = ClothRenderProgram::new(&device, &resources);
 
     // Create the cloth render vertex buffer.
@@ -186,17 +191,30 @@ fn main() {
     device.bind_buffer(&cloth_update_vertex_array,
                        &cloth_update_index_buffer,
                        BufferTarget::Index);
+    let quad_vertex_attr_descriptor = VertexAttrDescriptor {
+        size: 2,
+        class: VertexAttrClass::Float,
+        attr_type: VertexAttrType::F32,
+        stride: 4 * 2,
+        offset: 0,
+        divisor: 0,
+        buffer_index: 0,
+    };
     device.configure_vertex_attr(&cloth_update_vertex_array,
                                  &cloth_update_program.position_attribute,
-                                 &VertexAttrDescriptor {
-                                     size: 2,
-                                     class: VertexAttrClass::Float,
-                                     attr_type: VertexAttrType::F32,
-                                     stride: 4 * 2,
-                                     offset: 0,
-                                     divisor: 0,
-                                     buffer_index: 0,
-                                 });
+                                 &quad_vertex_attr_descriptor);
+
+    // Create the cloth debug LUT vertex array.
+    let cloth_debug_lut_vertex_array = device.create_vertex_array();
+    device.bind_buffer(&cloth_debug_lut_vertex_array,
+                       &cloth_update_vertex_buffer,
+                       BufferTarget::Vertex);
+    device.bind_buffer(&cloth_debug_lut_vertex_array,
+                       &cloth_update_index_buffer,
+                       BufferTarget::Index);
+    device.configure_vertex_attr(&cloth_debug_lut_vertex_array,
+                                 &cloth_debug_lut_program.position_attribute,
+                                 &quad_vertex_attr_descriptor);
 
     // Create the cloth render vertex array.
     let cloth_render_vertex_array = device.create_vertex_array();
@@ -289,6 +307,24 @@ fn main() {
             }
         });
 
+        /*
+        // Draw the debug LUT visualization.
+        device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
+            target: &RenderTarget::Default,
+            program: &cloth_debug_lut_program.program,
+            vertex_array: &cloth_debug_lut_vertex_array,
+            primitive: Primitive::Triangles,
+            uniforms: &[
+                (&cloth_debug_lut_program.positions_uniform, UniformData::TextureUnit(0)),
+                (&cloth_debug_lut_program.scale_uniform, UniformData::Float(DEBUG_POSITION_SCALE)),
+            ],
+            textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
+            viewport: RectI::new(Vector2I::splat(0),
+                                 vertex_position_texture_size.scale(DEBUG_VIEWPORT_SCALE)),
+            options: RenderOptions::default(),
+        });
+        */
+
         // Submit commands.
         device.end_commands();
 
@@ -346,6 +382,26 @@ impl ClothUpdateProgram {
             gravity_uniform,
             spring_uniform,
         }
+    }
+}
+
+struct ClothDebugLUTProgram {
+    program: GLProgram,
+    position_attribute: GLVertexAttr,
+    positions_uniform: GLUniform,
+    scale_uniform: GLUniform,
+}
+
+impl ClothDebugLUTProgram {
+    fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> ClothDebugLUTProgram {
+        let program = device.create_program_from_shader_names(resources,
+                                                              "cloth_debug_lut",
+                                                              "cloth_update",
+                                                              "cloth_debug_lut");
+        let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
+        let positions_uniform = device.get_uniform(&program, "Positions");
+        let scale_uniform = device.get_uniform(&program, "Scale");
+        ClothDebugLUTProgram { program, position_attribute, positions_uniform, scale_uniform }
     }
 }
 
