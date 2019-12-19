@@ -11,6 +11,7 @@ use resvg::{Options as ResvgOptions, ScreenSize};
 use resvg::backend_raqote;
 use resvg::usvg::{Options as UsvgOptions, Tree};
 use std::env;
+use std::f32;
 use std::slice;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
@@ -191,7 +192,7 @@ fn rasterize_needed_tiles(device: &GLDevice,
         let descriptor = &tile_cache_entry.descriptor;
         let scene_offset =
             Vector2F::new(descriptor.x as f32, descriptor.y as f32).scale(-(tile_size as f32));
-        let scale = (1 << descriptor.lod) as f32 * global_scale_factor;
+        let scale = f32::powf(2.0, descriptor.lod as f32) * global_scale_factor;
 
         let mut transform = Transform2F::default();
         transform = Transform2F::from_uniform_scale(scale) * transform;

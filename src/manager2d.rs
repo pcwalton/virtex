@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use pathfinder_geometry::transform2d::Transform2F;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
+use std::f32;
 
 pub struct VirtualTextureManager2D {
     pub texture: VirtualTexture,
@@ -34,7 +35,7 @@ impl VirtualTextureManager2D {
 
         let mut lods = ArrayVec::new();
         lods.push(lower_lod);
-        if (1 << lower_lod) as f32 != scale {
+        if f32::powf(2.0, lower_lod as f32) != scale {
             lods.push(lower_lod + 1);
         }
 
@@ -57,7 +58,7 @@ impl VirtualTextureManager2D {
     fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileCacheEntry>, lod: i32) {
         let viewport_rect = RectF::new(Vector2F::default(), self.viewport_size.to_f32());
         let transformed_viewport_rect = self.transform.inverse() * viewport_rect;
-        let tile_size_inv = ((1 << lod) as f32) / self.texture.tile_size as f32;
+        let tile_size_inv = f32::powf(2.0, lod as f32) / self.texture.tile_size as f32;
         let tile_space_rect = transformed_viewport_rect.scale(tile_size_inv).round_out().to_i32();
         println!("tile space rect={:?}", tile_space_rect);
         for y in tile_space_rect.min_y()..tile_space_rect.max_y() {

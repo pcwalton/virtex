@@ -18,7 +18,7 @@ float getMipLevel(vec2 texCoord) {
 }
 
 void main() {
-    float neededMipLevel = max(0.0, ceil(getMipLevel(vTexCoord * uViewportScaleFactor)));
+    float neededMipLevel = ceil(getMipLevel(vTexCoord * uViewportScaleFactor));
     vec2 scaledTexCoord = vTexCoord * pow(2.0, neededMipLevel) / uTileSize;
     vec2 neededTileOrigin = floor(scaledTexCoord);
 

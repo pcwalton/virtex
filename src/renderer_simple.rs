@@ -9,6 +9,7 @@ use pathfinder_gpu::resources::ResourceLoader;
 use pathfinder_gpu::{BlendFunc, BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps};
 use pathfinder_gpu::{Device, Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat};
 use pathfinder_gpu::{UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
+use std::f32;
 
 static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
 static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
@@ -51,7 +52,7 @@ impl<D> SimpleRenderer<D> where D: Device {
                 }
 
                 let tile_position = Vector2F::new(descriptor.x as f32, descriptor.y as f32);
-                let scaled_tile_size = tile_size as f32 / (1 << render_lod) as f32;
+                let scaled_tile_size = tile_size as f32 / f32::powf(2.0, render_lod as f32);
                 let tile_rect = RectF::new(tile_position,
                                            Vector2F::splat(1.0)).scale(scaled_tile_size);
 
