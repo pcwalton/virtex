@@ -4,8 +4,12 @@
 
 precision highp float;
 
+uniform sampler2D uTexture;
+
+in vec2 vTexCoord;
+
 out vec4 cFragColor;
 
 void main() {
-    cFragColor = vec4(1.0);
+    cFragColor = vec4(texture(uTexture, vTexCoord).rgb, 1.0);
 }

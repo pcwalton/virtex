@@ -11,6 +11,11 @@ use pathfinder_gpu::{ClearOps, Device, Primitive, RenderOptions, RenderState, Re
 use pathfinder_gpu::{TextureFormat, TextureDataRef, UniformData, VertexAttrClass};
 use pathfinder_gpu::{VertexAttrDescriptor, VertexAttrType};
 use pathfinder_simd::default::F32x4;
+use raqote::{DrawTarget, SolidSource, Transform};
+use resvg::backend_raqote;
+use resvg::usvg::{Options as UsvgOptions, Tree};
+use resvg::{Options as ResvgOptions, ScreenSize};
+use std::env;
 use std::f32::consts::FRAC_PI_2;
 use std::mem;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
@@ -18,6 +23,8 @@ use surfman::{SurfaceAccess, SurfaceType};
 use winit::dpi::LogicalSize;
 use winit::{DeviceEvent, Event, EventsLoop, KeyboardInput, VirtualKeyCode};
 use winit::{WindowBuilder, WindowEvent};
+
+static DEFAULT_SVG_PATH: &'static str = "resources/svg/Ghostscript_Tiger.svg";
 
 const WINDOW_WIDTH:  i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
@@ -33,9 +40,9 @@ const MESH_PATCH_COUNT:     i32 = MESH_PATCHES_ACROSS * MESH_PATCHES_DOWN;
 const MESH_VERTICES_ACROSS: i32 = MESH_PATCHES_ACROSS + 1;
 const MESH_VERTICES_DOWN:   i32 = MESH_PATCHES_DOWN + 1;
 const MESH_VERTEX_COUNT:    i32 = MESH_VERTICES_ACROSS * MESH_VERTICES_DOWN;
-// Uncomment for triangles:
-//const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 6;
-const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 8;
+const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 6;
+// Uncomment for lines:
+//const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 8;
 const MESH_CENTER_X:        f32 = MESH_PATCHES_ACROSS as f32 * 0.5;
 const MESH_CENTER_Y:        f32 = MESH_PATCHES_DOWN as f32 * 0.5;
 
@@ -54,7 +61,18 @@ struct ClothRenderVertex {
 }
 
 fn main() {
-    // Initialization boilerplate.
+    // Load up the SVG.
+
+    let svg_path = match env::args().nth(1) {
+        Some(path) => path,
+        None => DEFAULT_SVG_PATH.to_owned(),
+    };
+
+    let svg_tree = Tree::from_file(&svg_path, &UsvgOptions::default()).unwrap();
+    let svg_size = svg_tree.svg_node().size;
+    let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
+
+    // Graphics initialization boilerplate.
 
     let mut event_loop = EventsLoop::new();
     let dpi = event_loop.get_primary_monitor().get_hidpi_factor() as f32;
@@ -95,6 +113,32 @@ fn main() {
     let device = GLDevice::new(GLVersion::GL3, default_framebuffer_object);
     let resources = FilesystemResourceLoader::locate();
 
+    // Create the material texture.
+    let svg_size = svg_tree.svg_node().size;
+    let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
+    let mut svg_draw_target = DrawTarget::new(svg_size.x(), svg_size.y());
+    let svg_screen_size = ScreenSize::new(svg_size.x() as u32, svg_size.y() as u32).unwrap();
+    backend_raqote::render_to_canvas(&svg_tree,
+                                     &ResvgOptions::default(),
+                                     svg_screen_size,
+                                     &mut svg_draw_target);
+    let mut svg_pixels = Vec::with_capacity(svg_size.x() as usize * svg_size.y() as usize * 4);
+    for y in (0..svg_size.y()).rev() {
+        let stride = svg_size.x() as usize;
+        let first = stride * y as usize;
+        for &color in svg_draw_target.get_data()[first..(first + stride)].iter() {
+            svg_pixels.extend_from_slice(&[
+                ((color >> 16) & 0xff) as u8,
+                ((color >> 8) & 0xff) as u8,
+                (color & 0xff) as u8,
+                ((color >> 24) & 0xff) as u8,
+            ]);
+        }
+    }
+    let svg_texture = device.create_texture_from_data(TextureFormat::RGBA8,
+                                                      svg_size,
+                                                      TextureDataRef::U8(&svg_pixels));
+
     // Create the vertex position LUT textures.
     let vertex_positions = [0.0; MESH_VERTEX_COUNT as usize * 4];
     let vertex_position_texture_size = Vector2I::new(MESH_VERTICES_ACROSS, MESH_VERTICES_DOWN);
@@ -134,19 +178,19 @@ fn main() {
             let upper_left = (x + MESH_VERTICES_ACROSS * y)       as u32;
             let lower_left = (x + MESH_VERTICES_ACROSS * (y + 1)) as u32;
             let (upper_right, lower_right) = (upper_left + 1, lower_left + 1);
-            // Uncomment for filled rects:
-            /*
             cloth_render_indices.extend_from_slice(&[
                 upper_left,  upper_right, lower_left,
                 upper_right, lower_right, lower_left,
             ]);
-            */
+            // Uncomment for lines:
+            /*
             cloth_render_indices.extend_from_slice(&[
                 upper_left,  upper_right,
                 upper_right, lower_right,
                 lower_right, lower_left,
                 lower_left,  upper_left,
             ]);
+            */
         }
     }
 
@@ -278,20 +322,20 @@ fn main() {
             target: &RenderTarget::Default,
             program: &cloth_render_program.program,
             vertex_array: &cloth_render_vertex_array,
-            primitive: Primitive::Lines,
+            primitive: Primitive::Triangles,
             uniforms: &[
                 (&cloth_render_program.transform_uniform,
                  UniformData::Mat4([transform.c0, transform.c1, transform.c2, transform.c3])),
-                (&cloth_render_program.vertex_positions_uniform,
-                 UniformData::TextureUnit(0)),
+                (&cloth_render_program.vertex_positions_uniform, UniformData::TextureUnit(0)),
                 (&cloth_render_program.vertex_positions_size_uniform,
                  UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
+                (&cloth_render_program.texture_uniform, UniformData::TextureUnit(1)),
             ],
-            textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
+            textures: &[device.framebuffer_texture(&vertex_position_framebuffer), &svg_texture],
             viewport: RectI::new(Vector2I::splat(0), physical_window_size),
             options: RenderOptions {
                 clear_ops: ClearOps {
-                    color: Some(ColorF::new(0.0, 0.0, 0.0, 1.0)),
+                    color: Some(ColorF::new(0.5, 0.5, 0.5, 1.0)),
                     ..ClearOps::default()
                 },
                 ..RenderOptions::default()
@@ -400,6 +444,7 @@ struct ClothRenderProgram {
     transform_uniform: GLUniform,
     vertex_positions_uniform: GLUniform,
     vertex_positions_size_uniform: GLUniform,
+    texture_uniform: GLUniform,
 }
 
 impl ClothRenderProgram {
@@ -409,12 +454,14 @@ impl ClothRenderProgram {
         let transform_uniform = device.get_uniform(&program, "Transform");
         let vertex_positions_uniform = device.get_uniform(&program, "VertexPositions");
         let vertex_positions_size_uniform = device.get_uniform(&program, "VertexPositionsSize");
+        let texture_uniform = device.get_uniform(&program, "Texture");
         ClothRenderProgram {
             program,
             position_attribute,
             transform_uniform,
             vertex_positions_uniform,
             vertex_positions_size_uniform,
+            texture_uniform,
         }
     }
 }
