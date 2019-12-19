@@ -1,6 +1,6 @@
 #version 330
 
-// virtex/resources/shaders/cloth.fs.glsl
+// virtex/resources/shaders/cloth_render.fs.glsl
 
 precision highp float;
 

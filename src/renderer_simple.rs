@@ -6,8 +6,8 @@ use pathfinder_content::color::ColorF;
 use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use pathfinder_gpu::resources::ResourceLoader;
-use pathfinder_gpu::{BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps, Device};
-use pathfinder_gpu::{Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat};
+use pathfinder_gpu::{BlendFunc, BlendState, BufferData, BufferTarget, BufferUploadMode, ClearOps};
+use pathfinder_gpu::{Device, Primitive, RenderOptions, RenderState, RenderTarget, TextureFormat};
 use pathfinder_gpu::{UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
 
 static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
@@ -99,9 +99,12 @@ impl<D> SimpleRenderer<D> where D: Device {
                             ..ClearOps::default()
                         },
                         blend: if render_lod_index == 0 {
-                            BlendState::Off
+                            None
                         } else {
-                            BlendState::RGBOneAlphaOneMinusSrcAlpha
+                            Some(BlendState {
+                                func: BlendFunc::RGBOneAlphaOneMinusSrcAlpha,
+                                ..BlendState::default()
+                            })
                         },
                         ..RenderOptions::default()
                     },
