@@ -45,11 +45,11 @@ impl<D> SimpleRenderer<D> where D: Device {
 
         for (render_lod_index, &render_lod) in current_lods.iter().enumerate() {
             let opacity = if render_lod_index == 0 { 1.0 } else { high_lod_opacity };
-            for tile_cache_entry in self.manager.texture.all_cached_tiles() {
-                let descriptor = &tile_cache_entry.descriptor;
-                if descriptor.lod != render_lod {
-                    continue;
-                }
+            for tile_cache_entry in self.manager.texture.tiles() {
+                let descriptor = match tile_cache_entry.rasterized_descriptor {
+                    Some(descriptor) if descriptor.lod == render_lod => descriptor,
+                    _ => continue,
+                };
 
                 let tile_position = Vector2F::new(descriptor.x as f32, descriptor.y as f32);
                 let scaled_tile_size = tile_size as f32 / f32::powf(2.0, render_lod as f32);
@@ -57,7 +57,11 @@ impl<D> SimpleRenderer<D> where D: Device {
                                            Vector2F::splat(1.0)).scale(scaled_tile_size);
 
                 let tile_tex_origin = Vector2I::splat(1) +
-                    tile_cache_entry.address.0.scale(tile_backing_size as i32);
+                    self.manager
+                        .texture
+                        .address_to_tile_coords(tile_cache_entry.address)
+                        .scale(tile_backing_size as i32);
+
                 let tile_tex_size = Vector2I::splat(tile_size as i32);
 
                 let cache_tex_size = self.manager.texture.cache_texture_size();
@@ -116,6 +120,11 @@ impl<D> SimpleRenderer<D> where D: Device {
         }
 
         device.end_commands();
+    }
+
+    #[inline]
+    pub fn manager(&self) -> &VirtualTextureManager2D {
+        &self.manager
     }
 
     #[inline]

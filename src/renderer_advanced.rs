@@ -1,6 +1,6 @@
 // virtex/src/renderer_advanced.rs
 
-use crate::manager2d::VirtualTextureManager2D;
+use crate::manager2d::{TileRequest, VirtualTextureManager2D};
 use crate::{RequestResult, TileCacheEntry, TileDescriptor};
 
 use pathfinder_content::color::ColorF;
@@ -58,6 +58,11 @@ impl<D> AdvancedRenderer<D> where D: Device {
     }
 
     #[inline]
+    pub fn manager(&self) -> &VirtualTextureManager2D {
+        &self.manager
+    }
+
+    #[inline]
     pub fn manager_mut(&mut self) -> &mut VirtualTextureManager2D {
         &mut self.manager
     }
@@ -67,7 +72,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
         &self.cache_texture
     }
 
-    pub fn prepare(&mut self, device: &D, needed_tiles: &mut Vec<TileCacheEntry>) {
+    pub fn prepare(&mut self, device: &D, needed_tiles: &mut Vec<TileRequest>) {
         let quad_rect =
             RectI::new(Vector2I::default(), self.manager.texture.virtual_texture_size).to_f32();
         let tile_size = Vector2F::splat(self.manager.texture.tile_size() as f32);
@@ -133,7 +138,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
                                                            .texture
                                                            .request_tile(&descriptor) {
                 println!("{:?}", descriptor);
-                needed_tiles.push(TileCacheEntry { descriptor, address });
+                needed_tiles.push(TileRequest { descriptor, address });
             }
         }
     }
@@ -151,11 +156,20 @@ impl<D> AdvancedRenderer<D> where D: Device {
 
         let tile_size = self.manager.texture.tile_size() as f32;
         let tile_backing_size = self.manager.texture.tile_backing_size() as f32;
+        let tiles = self.manager.texture.tiles();
 
-        for (cache_index, tile_descriptor) in self.manager.texture.lru.iter().enumerate() {
-            let tile_address = self.manager.texture.cache.get(&tile_descriptor).unwrap();
+        for (cache_index, &tile_address) in self.manager.texture.lru.iter().enumerate() {
+            let tile_descriptor = match &tiles[tile_address.0 as usize].rasterized_descriptor {
+                None => continue,
+                Some(tile_descriptor) => tile_descriptor,
+            };
 
-            let tile_origin = tile_address.0.to_f32().scale(tile_backing_size);
+            let tile_origin = self.manager
+                                  .texture
+                                  .address_to_tile_coords(tile_address)
+                                  .to_f32()
+                                  .scale(tile_backing_size);
+
             let tile_rect = RectF::new(tile_origin + Vector2F::splat(1.0),
                                        Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
 

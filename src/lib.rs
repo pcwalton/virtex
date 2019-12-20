@@ -15,19 +15,21 @@ pub struct TileDescriptor {
     pub lod: i32,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct TileAddress(pub Vector2I);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileAddress(pub u32);
 
 #[derive(Clone, Copy, Debug)]
 pub struct TileCacheEntry {
-    pub descriptor: TileDescriptor,
     pub address: TileAddress,
+    pub rasterized_descriptor: Option<TileDescriptor>,
+    pub pending_descriptor: Option<TileDescriptor>,
 }
 
 pub struct VirtualTexture {
     cache: HashMap<TileDescriptor, TileAddress>,
-    lru: VecDeque<TileDescriptor>,
-    free_tile_addresses: Vec<TileAddress>,
+    lru: VecDeque<TileAddress>,
+    tiles: Vec<TileCacheEntry>,
+    next_free_tile: TileAddress,
     #[allow(dead_code)]
     virtual_texture_size: Vector2I,
     cache_texture_size: Vector2I,
@@ -37,6 +39,7 @@ pub struct VirtualTexture {
 pub enum RequestResult {
     CacheFull,
     CacheHit(TileAddress),
+    CachePending(TileAddress),
     CacheMiss(TileAddress),
 }
 
@@ -46,52 +49,67 @@ impl VirtualTexture {
         let mut this = VirtualTexture {
             cache: HashMap::new(),
             lru: VecDeque::new(),
-            free_tile_addresses: vec![],
+            tiles: vec![],
+            next_free_tile: TileAddress(0),
             virtual_texture_size,
             cache_texture_size,
             tile_size,
         };
 
-        let tiles_down = this.tile_texture_tiles_down() as i32;
-        let tiles_across = this.tile_texture_tiles_across() as i32;
-        for tile_y in 0..tiles_down {
-            for tile_x in 0..tiles_across {
-                this.free_tile_addresses.push(TileAddress(Vector2I::new(tile_x, tile_y)));
-            }
+        for address in 0..this.cache_size() {
+            this.tiles.push(TileCacheEntry {
+                address: TileAddress(address),
+                rasterized_descriptor: None,
+                pending_descriptor: None,
+            });
         }
 
         this
     }
 
     pub fn request_tile(&mut self, tile_descriptor: &TileDescriptor) -> RequestResult {
+        // If already rasterized, just return it.
         if let Some(&tile_address) = self.cache.get(tile_descriptor) {
-            let lru_index = self.lru.iter().enumerate().find(|(_, current_descriptor)| {
-                *current_descriptor == tile_descriptor
-            }).expect("Where's the descriptor in the LRU list?").0;
+            let lru_index = self.lru.iter().enumerate().find(|(_, current_address)| {
+                **current_address == tile_address
+            }).expect("Where's the address in the LRU list?").0;
             self.lru.remove(lru_index);
-            self.lru.push_front(*tile_descriptor);
-            return RequestResult::CacheHit(tile_address);
+            self.lru.push_front(tile_address);
+
+            let tile = &self.tiles[tile_address.0 as usize];
+            if tile.rasterized_descriptor == Some(*tile_descriptor) {
+                return RequestResult::CacheHit(tile_address);
+            }
+            debug_assert_eq!(tile.pending_descriptor, Some(*tile_descriptor));
+            return RequestResult::CachePending(tile_address);
         }
 
-        if self.free_tile_addresses.is_empty() {
-            let descriptor_to_evict = match self.lru.pop_back() {
+        let mut tile_address = self.next_free_tile;
+        if tile_address.0 < self.cache_size() {
+            self.next_free_tile.0 += 1;
+        } else {
+            match self.lru.pop_back() {
                 None => return RequestResult::CacheFull,
-                Some(descriptor_to_evict) => descriptor_to_evict,
-            };
-            let tile_address_to_evict =
-                self.cache
-                    .remove(&descriptor_to_evict)
-                    .expect("Where's the descriptor in the cache?");
-            self.free_tile_addresses.push(tile_address_to_evict);
+                Some(address_to_evict) => tile_address = address_to_evict,
+            }
         }
 
-        let tile_address = match self.free_tile_addresses.pop() {
-            None => return RequestResult::CacheFull,
-            Some(tile_address) => tile_address,
-        };
+        self.tiles[tile_address.0 as usize].pending_descriptor = Some(*tile_descriptor);
         self.cache.insert(*tile_descriptor, tile_address);
-        self.lru.push_front(*tile_descriptor);
+        self.lru.push_front(tile_address);
         RequestResult::CacheMiss(tile_address)
+    }
+
+    pub fn mark_as_rasterized(&mut self,
+                              tile_address: TileAddress,
+                              tile_descriptor: &TileDescriptor) {
+        let mut tile = &mut self.tiles[tile_address.0 as usize];
+        debug_assert_eq!(tile.pending_descriptor, Some(*tile_descriptor));
+        if let Some(evicted_descriptor) = tile.rasterized_descriptor.take() {
+            let old_address = self.cache.remove(&evicted_descriptor);
+            debug_assert_eq!(old_address, Some(tile_address));
+        }
+        tile.rasterized_descriptor = tile.pending_descriptor.take();
     }
 
     #[inline]
@@ -124,10 +142,14 @@ impl VirtualTexture {
         self.cache_texture_size.y() as u32 / self.tile_backing_size()
     }
 
-    pub fn all_cached_tiles(&self) -> Vec<TileCacheEntry> {
-        self.cache
-            .iter()
-            .map(|(&descriptor, &address)| TileCacheEntry { descriptor, address })
-            .collect()
+    #[inline]
+    pub fn tiles(&self) -> &[TileCacheEntry] {
+        &self.tiles[..]
+    }
+
+    #[inline]
+    pub fn address_to_tile_coords(&self, address: TileAddress) -> Vector2I {
+        let tiles_across = self.tile_texture_tiles_across();
+        Vector2I::new((address.0 % tiles_across) as i32, (address.0 / tiles_across) as i32)
     }
 }

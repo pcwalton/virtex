@@ -1,6 +1,6 @@
 // virtex/src/manager2d.rs
 
-use crate::{RequestResult, TileCacheEntry, TileDescriptor, VirtualTexture};
+use crate::{RequestResult, TileAddress, TileCacheEntry, TileDescriptor, VirtualTexture};
 
 use arrayvec::ArrayVec;
 use pathfinder_geometry::transform2d::Transform2F;
@@ -12,6 +12,12 @@ pub struct VirtualTextureManager2D {
     pub texture: VirtualTexture,
     pub transform: Transform2F,
     viewport_size: Vector2I,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileRequest {
+    pub descriptor: TileDescriptor,
+    pub address: TileAddress,
 }
 
 impl VirtualTextureManager2D {
@@ -42,7 +48,7 @@ impl VirtualTextureManager2D {
         lods
     }
 
-    pub fn request_needed_tiles(&mut self, needed_tiles: &mut Vec<TileCacheEntry>) {
+    pub fn request_needed_tiles(&mut self, needed_tiles: &mut Vec<TileRequest>) {
         let lods = self.current_lods();
         println!("lods={:?}", lods);
         for lod in lods {
@@ -55,7 +61,7 @@ impl VirtualTextureManager2D {
         self.viewport_size
     }
 
-    fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileCacheEntry>, lod: i32) {
+    fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileRequest>, lod: i32) {
         let viewport_rect = RectF::new(Vector2F::default(), self.viewport_size.to_f32());
         let transformed_viewport_rect = self.transform.inverse() * viewport_rect;
         let tile_size_inv = f32::powf(2.0, lod as f32) / self.texture.tile_size as f32;
@@ -65,7 +71,7 @@ impl VirtualTextureManager2D {
             for x in tile_space_rect.min_x()..tile_space_rect.max_x() {
                 let descriptor = TileDescriptor { x, y, lod };
                 if let RequestResult::CacheMiss(address) = self.texture.request_tile(&descriptor) {
-                    needed_tiles.push(TileCacheEntry { descriptor, address });
+                    needed_tiles.push(TileRequest { descriptor, address });
                 }
             }
         }

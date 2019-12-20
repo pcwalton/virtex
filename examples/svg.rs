@@ -13,11 +13,13 @@ use resvg::usvg::{Options as UsvgOptions, Tree};
 use std::env;
 use std::f32;
 use std::slice;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
-use virtex::manager2d::VirtualTextureManager2D;
+use virtex::VirtualTexture;
+use virtex::manager2d::{TileRequest, VirtualTextureManager2D};
 use virtex::renderer_advanced::AdvancedRenderer;
-use virtex::{TileCacheEntry, VirtualTexture};
 use winit::dpi::LogicalSize;
 use winit::{DeviceEvent, Event, EventsLoop, KeyboardInput, ModifiersState, MouseScrollDelta};
 use winit::{VirtualKeyCode, WindowBuilder, WindowEvent};
@@ -47,11 +49,6 @@ fn main() {
         None => DEFAULT_GLOBAL_SCALE_FACTOR,
         Some(factor) => factor.parse().unwrap(),
     };
-
-    let svg_tree = Tree::from_file(&svg_path, &UsvgOptions::default()).unwrap();
-    let svg_size = svg_tree.svg_node().size;
-    let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
-    let svg_size = svg_size.scale(global_scale_factor as i32);
 
     let mut event_loop = EventsLoop::new();
     let dpi = event_loop.get_primary_monitor().get_hidpi_factor() as f32;
@@ -92,14 +89,24 @@ fn main() {
     let device = GLDevice::new(GLVersion::GL3, default_framebuffer_object);
     let resources = FilesystemResourceLoader::locate();
 
-    // Initialize the cache.
-    let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
-    let mut cache_pixels =
-        vec![0; cache_texture_size.x() as usize * cache_texture_size.y() as usize];
-    let mut cache_draw_target = DrawTarget::new(TILE_BACKING_SIZE as i32,
-                                                TILE_BACKING_SIZE as i32);
+    // Initialize the raster thread.
+    let (mut main_to_rasterizer_sender, main_to_rasterizer_receiver) = mpsc::channel();
+    let (rasterizer_to_main_sender, mut rasterizer_to_main_receiver) = mpsc::channel();
+    let _raster_thread = thread::spawn(move || {
+        rasterizer_thread(rasterizer_to_main_sender,
+                          main_to_rasterizer_receiver,
+                          svg_path,
+                          global_scale_factor);
+    });
+
+    // Wait for the SVG to be loaded.
+    let svg_size = match rasterizer_to_main_receiver.recv().unwrap() {
+        RasterizerToMainMsg::SVGLoaded { size } => size,
+        RasterizerToMainMsg::TileRasterized { .. } => unreachable!(),
+    };
 
     // Initialize the virtual texture.
+    let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
     let virtual_texture = VirtualTexture::new(svg_size, cache_texture_size, TILE_SIZE);
     let manager = VirtualTextureManager2D::new(virtual_texture, physical_window_size);
     let mut renderer = AdvancedRenderer::new(&device, manager, &resources);
@@ -113,11 +120,9 @@ fn main() {
         renderer.prepare(&device, &mut needed_tiles);
         rasterize_needed_tiles(&device,
                                &mut renderer,
-                               global_scale_factor,
-                               &mut cache_draw_target,
-                               &mut cache_pixels,
-                               &svg_tree,
-                               &mut needed_tiles);
+                               &mut needed_tiles,
+                               &mut main_to_rasterizer_sender,
+                               &mut rasterizer_to_main_receiver);
 
         renderer.render(&device);
 
@@ -170,65 +175,40 @@ fn main() {
 
 fn rasterize_needed_tiles(device: &GLDevice,
                           renderer: &mut AdvancedRenderer<GLDevice>,
-                          global_scale_factor: f32,
-                          cache_draw_target: &mut DrawTarget,
-                          cache_pixels: &mut [u32],
-                          svg_tree: &Tree,
-                          needed_tiles: &mut Vec<TileCacheEntry>) {
-    if needed_tiles.is_empty() {
-        return;
+                          needed_tiles: &mut Vec<TileRequest>,
+                          sender: &mut Sender<MainToRasterizerMsg>,
+                          receiver: &mut Receiver<RasterizerToMainMsg>) {
+    if !needed_tiles.is_empty() {
+        for tile_cache_entry in needed_tiles.drain(..) {
+            let tile_origin = renderer.manager()
+                                    .texture
+                                    .address_to_tile_coords(tile_cache_entry.address);
+            sender.send(MainToRasterizerMsg { tile_request: tile_cache_entry, tile_origin })
+                  .unwrap();
+        }
     }
 
+    // FIXME(pcwalton): Squash multiple upload-to-texture operations.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
+    while let Ok(msg) = receiver.try_recv() {
+        let (tile_request, new_cache_texture_pixels) = match msg {
+            RasterizerToMainMsg::SVGLoaded { .. } => unreachable!(),
+            RasterizerToMainMsg::TileRasterized { tile_request, new_cache_texture_pixels } => {
+                (tile_request, new_cache_texture_pixels)
+            }
+        };
 
-    let svg_size = svg_tree.svg_node().size;
-    let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
-    let svg_screen_size = ScreenSize::new(svg_size.x() as u32, svg_size.y() as u32).unwrap();
-
-    let tile_size = renderer.manager_mut().texture.tile_size();
-
-    for tile_cache_entry in needed_tiles.drain(..) {
-        println!("rendering {:?}, tile_size={}", tile_cache_entry, tile_size);
-        let descriptor = &tile_cache_entry.descriptor;
-        let scene_offset =
-            Vector2F::new(descriptor.x as f32, descriptor.y as f32).scale(-(tile_size as f32));
-        let scale = f32::powf(2.0, descriptor.lod as f32) * global_scale_factor;
-
-        let mut transform = Transform2F::default();
-        transform = Transform2F::from_uniform_scale(scale) * transform;
-        transform = Transform2F::from_translation(scene_offset) * transform;
-        transform = Transform2F::from_translation(Vector2F::splat(1.0)) * transform;
-        //transform = Transform2F::from_translation(tile_offset.to_f32()) * transform;
-
-        println!("... transform={:?}", transform);
-        cache_draw_target.set_transform(&Transform::row_major(transform.matrix.m11(),
-                                                              transform.matrix.m21(),
-                                                              transform.matrix.m12(),
-                                                              transform.matrix.m22(),
-                                                              transform.vector.x(),
-                                                              transform.vector.y()));
-        cache_draw_target.clear(BACKGROUND_COLOR);
-        backend_raqote::render_to_canvas(&svg_tree,
-                                         &ResvgOptions::default(),
-                                         svg_screen_size,
-                                         cache_draw_target);
-        cache_draw_target.set_transform(&Transform::identity());
-
-        let address = tile_cache_entry.address;
-        let tile_rect = RectI::new(address.0, Vector2I::splat(1)).scale(TILE_BACKING_SIZE as i32);
-
-        blit(cache_pixels,
-             cache_texture_size.x() as usize,
-             tile_rect,
-             cache_draw_target.get_data(),
-             TILE_BACKING_SIZE as usize,
-             Vector2I::default());
-    }
-    //cache_draw_target.write_png("cache.png").unwrap();
-    unsafe {
-        let cache_pixels: &[u8] = slice::from_raw_parts(cache_pixels.as_ptr() as *const u8,
-                                                        cache_pixels.len() * 4);
-        device.upload_to_texture(&renderer.cache_texture(), cache_texture_size, cache_pixels);
+        renderer.manager_mut().texture.mark_as_rasterized(tile_request.address,
+                                                          &tile_request.descriptor);
+        unsafe {
+            let cache_pixels: &[u8] =
+                slice::from_raw_parts(new_cache_texture_pixels.as_ptr() as *const u8,
+                                      new_cache_texture_pixels.len() * 4);
+            device.upload_to_texture(&renderer.cache_texture(), cache_texture_size, cache_pixels);
+        }
+        println!("marking {:?}/{:?} as rasterized!",
+                 tile_request.address,
+                 tile_request.descriptor);
     }
 }
 
@@ -247,5 +227,84 @@ fn blit(dest: &mut [u32],
             dest[dest_start + x as usize] =
                 (pixel & 0x00ff00ff).rotate_right(16) | (pixel & 0xff00ff00);
         }
+    }
+}
+
+struct MainToRasterizerMsg {
+    tile_request: TileRequest,
+    tile_origin: Vector2I,
+}
+
+enum RasterizerToMainMsg {
+    SVGLoaded {
+        size: Vector2I,
+    },
+    TileRasterized {
+        tile_request: TileRequest,
+        new_cache_texture_pixels: Vec<u32>,
+    },
+}
+
+fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
+                     receiver: Receiver<MainToRasterizerMsg>,
+                     svg_path: String,
+                     global_scale_factor: f32) {
+    // Load the SVG.
+    let svg_tree = Tree::from_file(&svg_path, &UsvgOptions::default()).unwrap();
+
+    let svg_size = svg_tree.svg_node().size;
+    let svg_size = Vector2I::new(svg_size.width().ceil() as i32, svg_size.height().ceil() as i32);
+    let svg_screen_size = ScreenSize::new(svg_size.x() as u32, svg_size.y() as u32).unwrap();
+
+    sender.send(RasterizerToMainMsg::SVGLoaded { size: svg_size }).unwrap();
+
+    // Initialize the cache.
+    let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
+    let mut cache_pixels =
+        vec![0; cache_texture_size.x() as usize * cache_texture_size.y() as usize];
+    let mut cache_draw_target = DrawTarget::new(TILE_BACKING_SIZE as i32,
+                                                TILE_BACKING_SIZE as i32);
+
+    while let Ok(msg) = receiver.recv() {
+        println!("rendering {:?}, tile_size={}", msg.tile_request, TILE_SIZE);
+        let descriptor = &msg.tile_request.descriptor;
+        let scene_offset =
+            Vector2F::new(descriptor.x as f32, descriptor.y as f32).scale(-(TILE_SIZE as f32));
+        let scale = f32::powf(2.0, descriptor.lod as f32) /* * global_scale_factor */;
+
+        let mut transform = Transform2F::default();
+        transform = Transform2F::from_uniform_scale(scale) * transform;
+        transform = Transform2F::from_translation(scene_offset) * transform;
+        transform = Transform2F::from_translation(Vector2F::splat(1.0)) * transform;
+        //transform = Transform2F::from_translation(tile_offset.to_f32()) * transform;
+
+        println!("... transform={:?}", transform);
+        cache_draw_target.set_transform(&Transform::row_major(transform.matrix.m11(),
+                                                              transform.matrix.m21(),
+                                                              transform.matrix.m12(),
+                                                              transform.matrix.m22(),
+                                                              transform.vector.x(),
+                                                              transform.vector.y()));
+        cache_draw_target.clear(BACKGROUND_COLOR);
+        backend_raqote::render_to_canvas(&svg_tree,
+                                         &ResvgOptions::default(),
+                                         svg_screen_size,
+                                         &mut cache_draw_target);
+        cache_draw_target.set_transform(&Transform::identity());
+
+        let tile_rect = RectI::new(msg.tile_origin,
+                                   Vector2I::splat(1)).scale(TILE_BACKING_SIZE as i32);
+
+        blit(&mut cache_pixels,
+             cache_texture_size.x() as usize,
+             tile_rect,
+             cache_draw_target.get_data(),
+             TILE_BACKING_SIZE as usize,
+             Vector2I::default());
+
+        sender.send(RasterizerToMainMsg::TileRasterized {
+            tile_request: msg.tile_request,
+            new_cache_texture_pixels: cache_pixels.clone(),
+        }).unwrap();
     }
 }
