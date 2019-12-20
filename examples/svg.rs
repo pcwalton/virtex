@@ -5,14 +5,13 @@ use pathfinder_geometry::transform2d::Transform2F;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use pathfinder_gl::{GLDevice, GLVersion};
 use pathfinder_gpu::resources::FilesystemResourceLoader;
-use pathfinder_gpu::{Device};
+use pathfinder_gpu::{Device, TextureDataRef};
 use raqote::{DrawTarget, SolidSource, Transform};
 use resvg::{Options as ResvgOptions, ScreenSize};
 use resvg::backend_raqote;
 use resvg::usvg::{Options as UsvgOptions, Tree};
 use std::env;
 use std::f32;
-use std::slice;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
@@ -191,28 +190,29 @@ fn rasterize_needed_tiles(device: &GLDevice,
     // FIXME(pcwalton): Squash multiple upload-to-texture operations.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
     while let Ok(msg) = receiver.try_recv() {
-        let (tile_request, new_cache_texture_pixels) = match msg {
+        let (tile_request, tile_origin, new_tile_pixels) = match msg {
             RasterizerToMainMsg::SVGLoaded { .. } => unreachable!(),
-            RasterizerToMainMsg::TileRasterized { tile_request, new_cache_texture_pixels } => {
-                (tile_request, new_cache_texture_pixels)
+            RasterizerToMainMsg::TileRasterized { tile_request, tile_origin, new_tile_pixels } => {
+                (tile_request, tile_origin, new_tile_pixels)
             }
         };
 
         renderer.manager_mut().texture.mark_as_rasterized(tile_request.address,
                                                           &tile_request.descriptor);
-        unsafe {
-            let cache_pixels: &[u8] =
-                slice::from_raw_parts(new_cache_texture_pixels.as_ptr() as *const u8,
-                                      new_cache_texture_pixels.len() * 4);
-            device.upload_to_texture(&renderer.cache_texture(), cache_texture_size, cache_pixels);
-        }
+
+        let cache_texture_rect =
+            RectI::new(tile_origin, Vector2I::splat(1)).scale(TILE_BACKING_SIZE as i32);
+        device.upload_to_texture(&renderer.cache_texture(),
+                                 cache_texture_rect,
+                                 TextureDataRef::U8(&new_tile_pixels));
+
         println!("marking {:?}/{:?} as rasterized!",
                  tile_request.address,
                  tile_request.descriptor);
     }
 }
 
-fn blit(dest: &mut [u32],
+fn blit(dest: &mut [u8],
         dest_stride: usize,
         dest_rect: RectI,
         src: &[u32],
@@ -220,12 +220,15 @@ fn blit(dest: &mut [u32],
         src_origin: Vector2I) {
     for y in 0..dest_rect.size().y() {
         let dest_start = (dest_rect.origin().y() + y) as usize * dest_stride +
-            dest_rect.origin().x() as usize;
+            dest_rect.origin().x() as usize * 4;
         let src_start = (src_origin.y() + y) as usize * src_stride + src_origin.x() as usize;
         for x in 0..dest_rect.size().x() {
             let pixel = src[src_start + x as usize];
-            dest[dest_start + x as usize] =
-                (pixel & 0x00ff00ff).rotate_right(16) | (pixel & 0xff00ff00);
+            let dest_offset = dest_start + x as usize * 4;
+            dest[dest_offset + 0] = ((pixel >> 16) & 0xff) as u8;
+            dest[dest_offset + 1] = ((pixel >> 8) & 0xff) as u8;
+            dest[dest_offset + 2] = (pixel & 0xff) as u8;
+            dest[dest_offset + 3] = ((pixel >> 24) & 0xff) as u8;
         }
     }
 }
@@ -241,7 +244,8 @@ enum RasterizerToMainMsg {
     },
     TileRasterized {
         tile_request: TileRequest,
-        new_cache_texture_pixels: Vec<u32>,
+        tile_origin: Vector2I,
+        new_tile_pixels: Vec<u8>,
     },
 }
 
@@ -260,8 +264,7 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
 
     // Initialize the cache.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
-    let mut cache_pixels =
-        vec![0; cache_texture_size.x() as usize * cache_texture_size.y() as usize];
+    let mut cache_pixels = vec![0; TILE_BACKING_SIZE as usize * TILE_BACKING_SIZE as usize * 4];
     let mut cache_draw_target = DrawTarget::new(TILE_BACKING_SIZE as i32,
                                                 TILE_BACKING_SIZE as i32);
 
@@ -295,16 +298,20 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
         let tile_rect = RectI::new(msg.tile_origin,
                                    Vector2I::splat(1)).scale(TILE_BACKING_SIZE as i32);
 
+        let mut cache_pixels =
+            vec![0; TILE_BACKING_SIZE as usize * TILE_BACKING_SIZE as usize * 4];
+
         blit(&mut cache_pixels,
-             cache_texture_size.x() as usize,
-             tile_rect,
+             TILE_BACKING_SIZE as usize * 4,
+             RectI::new(Vector2I::default(), Vector2I::splat(TILE_BACKING_SIZE as i32)),
              cache_draw_target.get_data(),
              TILE_BACKING_SIZE as usize,
              Vector2I::default());
 
         sender.send(RasterizerToMainMsg::TileRasterized {
             tile_request: msg.tile_request,
-            new_cache_texture_pixels: cache_pixels.clone(),
+            tile_origin: msg.tile_origin,
+            new_tile_pixels: cache_pixels,
         }).unwrap();
     }
 }

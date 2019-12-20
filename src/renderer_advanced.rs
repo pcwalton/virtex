@@ -8,8 +8,9 @@ use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use pathfinder_gpu::resources::ResourceLoader;
 use pathfinder_gpu::{BufferData, BufferTarget, BufferUploadMode, ClearOps, Device, Primitive};
-use pathfinder_gpu::{RenderOptions, RenderState, RenderTarget, TextureData, TextureFormat};
-use pathfinder_gpu::{UniformData, VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
+use pathfinder_gpu::{RenderOptions, RenderState, RenderTarget, TextureData, TextureDataRef};
+use pathfinder_gpu::{TextureFormat, UniformData, VertexAttrClass};
+use pathfinder_gpu::{VertexAttrDescriptor, VertexAttrType};
 use pathfinder_simd::default::F32x2;
 use std::slice;
 
@@ -182,13 +183,9 @@ impl<D> AdvancedRenderer<D> where D: Device {
             metadata[metadata_stride * 1 + cache_index * 4 + 3] = tile_rect.max_y();
         }
 
-        unsafe {
-            let metadata_texels: &[u8] = slice::from_raw_parts(metadata.as_ptr() as *const u8,
-                                                            metadata.len() * 4 * 4);
-            device.upload_to_texture(&self.metadata_texture,
-                                     metadata_texture_size,
-                                     metadata_texels);
-        }
+        device.upload_to_texture(&self.metadata_texture,
+                                 RectI::new(Vector2I::default(), metadata_texture_size),
+                                 TextureDataRef::F32(&metadata));
 
         let quad_rect =
             RectI::new(Vector2I::default(), self.manager.texture.virtual_texture_size).to_f32();
