@@ -33,7 +33,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
                -> AdvancedRenderer<D> {
         let cache_texture = device.create_texture(TextureFormat::RGBA8,
                                                   manager.texture.cache_texture_size());
-        let metadata_texture_size = Vector2I::new(manager.texture.cache_size() as i32, 2);
+        let metadata_texture_size = Vector2I::new(manager.texture.table_size() as i32, 4);
         let metadata_texture = device.create_texture(TextureFormat::RGBA32F,
                                                      metadata_texture_size);
 
@@ -134,7 +134,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
 
             if let RequestResult::CacheMiss(address) = self.manager
                                                            .texture
-                                                           .request_tile(&descriptor) {
+                                                           .request_tile(descriptor) {
                 println!("{:?}", descriptor);
                 needed_tiles.push(TileRequest { descriptor, address });
             }
@@ -143,8 +143,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
 
     pub fn render(&mut self, device: &D) {
         // Pack and upload new metadata.
-        let cache_size = self.manager.texture.cache_size() as i32;
-        let metadata_texture_size = Vector2I::new(cache_size, 2);
+        let table_size = self.manager.texture.table_size();
+        let metadata_texture_size = Vector2I::new(table_size as i32, 4);
         let metadata_stride = metadata_texture_size.x() as usize * 4;
         let mut metadata = vec![0.0; metadata_stride * metadata_texture_size.y() as usize];
 
@@ -156,30 +156,45 @@ impl<D> AdvancedRenderer<D> where D: Device {
         let tile_backing_size = self.manager.texture.tile_backing_size() as f32;
         let tiles = self.manager.texture.tiles();
 
-        for (cache_index, &tile_address) in self.manager.texture.lru.iter().enumerate() {
-            let tile_descriptor = match &tiles[tile_address.0 as usize].rasterized_descriptor {
-                None => continue,
-                Some(tile_descriptor) => tile_descriptor,
-            };
+        for (subtable_index, subtable) in self.manager.texture.cache.subtables.iter().enumerate() {
+            for (bucket_index, &bucket) in subtable.buckets.iter().enumerate() {
+                if bucket.is_empty() {
+                    continue;
+                }
 
-            let tile_origin = self.manager
-                                  .texture
-                                  .address_to_tile_coords(tile_address)
-                                  .to_f32()
-                                  .scale(tile_backing_size);
+                let tile_address = bucket.address;
+                let tile_descriptor = match &tiles[tile_address.0 as usize].rasterized_descriptor {
+                    None => continue,
+                    Some(tile_descriptor) => tile_descriptor,
+                };
 
-            let tile_rect = RectF::new(tile_origin + Vector2F::splat(1.0),
-                                       Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
+                let tile_origin = self.manager
+                                      .texture
+                                      .address_to_tile_coords(tile_address)
+                                      .to_f32()
+                                      .scale(tile_backing_size);
 
-            let tile_position = tile_descriptor.tile_position();
+                let tile_rect = RectF::new(tile_origin + Vector2F::splat(1.0),
+                                        Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
 
-            metadata[metadata_stride * 0 + cache_index * 4 + 0] = tile_position.x() as f32;
-            metadata[metadata_stride * 0 + cache_index * 4 + 1] = tile_position.y() as f32;
-            metadata[metadata_stride * 0 + cache_index * 4 + 2] = tile_descriptor.lod() as f32;
-            metadata[metadata_stride * 1 + cache_index * 4 + 0] = tile_rect.origin().x();
-            metadata[metadata_stride * 1 + cache_index * 4 + 1] = tile_rect.origin().y();
-            metadata[metadata_stride * 1 + cache_index * 4 + 2] = tile_rect.max_x();
-            metadata[metadata_stride * 1 + cache_index * 4 + 3] = tile_rect.max_y();
+                let tile_position = tile_descriptor.tile_position();
+
+                // FIXME(pcwalton): Boy, this is ugly.
+                metadata[metadata_stride * (subtable_index * 2 + 0) + bucket_index * 4 + 0] =
+                    tile_position.x() as f32;
+                metadata[metadata_stride * (subtable_index * 2 + 0) + bucket_index * 4 + 1] =
+                    tile_position.y() as f32;
+                metadata[metadata_stride * (subtable_index * 2 + 0) + bucket_index * 4 + 2] =
+                    tile_descriptor.lod() as f32;
+                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 0] =
+                    tile_rect.origin().x();
+                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 1] =
+                    tile_rect.origin().y();
+                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 2] =
+                    tile_rect.max_x();
+                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 3] =
+                    tile_rect.max_y();
+            }
         }
 
         device.upload_to_texture(&self.metadata_texture,
@@ -210,8 +225,12 @@ impl<D> AdvancedRenderer<D> where D: Device {
                  UniformData::TextureUnit(0)),
                 (&self.render_vertex_array.render_program.tile_cache_uniform,
                  UniformData::TextureUnit(1)),
+                (&self.render_vertex_array.render_program.cache_seed_a_uniform,
+                 UniformData::Int(self.manager.texture.cache.subtables[0].seed as i32)),
+                (&self.render_vertex_array.render_program.cache_seed_b_uniform,
+                 UniformData::Int(self.manager.texture.cache.subtables[1].seed as i32)),
                 (&self.render_vertex_array.render_program.cache_size_uniform,
-                 UniformData::Int(cache_size)),
+                 UniformData::Int(table_size as i32)),
                 (&self.render_vertex_array.render_program.tile_size_uniform,
                  UniformData::Vec2(tile_size.0)),
             ],
@@ -365,6 +384,8 @@ struct RenderAdvancedProgram<D> where D: Device {
     translation_uniform: D::Uniform,
     metadata_uniform: D::Uniform,
     tile_cache_uniform: D::Uniform,
+    cache_seed_a_uniform: D::Uniform,
+    cache_seed_b_uniform: D::Uniform,
     cache_size_uniform: D::Uniform,
     tile_size_uniform: D::Uniform,
 }
@@ -379,6 +400,8 @@ impl<D> RenderAdvancedProgram<D> where D: Device {
         let translation_uniform = device.get_uniform(&program, "Translation");
         let metadata_uniform = device.get_uniform(&program, "Metadata");
         let tile_cache_uniform = device.get_uniform(&program, "TileCache");
+        let cache_seed_a_uniform = device.get_uniform(&program, "CacheSeedA");
+        let cache_seed_b_uniform = device.get_uniform(&program, "CacheSeedB");
         let cache_size_uniform = device.get_uniform(&program, "CacheSize");
         let tile_size_uniform = device.get_uniform(&program, "TileSize");
         RenderAdvancedProgram {
@@ -390,6 +413,8 @@ impl<D> RenderAdvancedProgram<D> where D: Device {
             translation_uniform,
             metadata_uniform,
             tile_cache_uniform,
+            cache_seed_a_uniform,
+            cache_seed_b_uniform,
             cache_size_uniform,
             tile_size_uniform,
         }

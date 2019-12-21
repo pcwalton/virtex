@@ -41,19 +41,20 @@ const MESH_VERTICES_ACROSS: i32 = MESH_PATCHES_ACROSS + 1;
 const MESH_VERTICES_DOWN:   i32 = MESH_PATCHES_DOWN + 1;
 const MESH_VERTEX_COUNT:    i32 = MESH_VERTICES_ACROSS * MESH_VERTICES_DOWN;
 const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 6;
-// Uncomment for lines:
-//const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 8;
 const MESH_CENTER_X:        f32 = MESH_PATCHES_ACROSS as f32 * 0.5;
 const MESH_CENTER_Y:        f32 = MESH_PATCHES_DOWN as f32 * 0.5;
 
-const GRAVITY: f32 = 0.003;
-const SPRING:  f32 = -0.2;
+const GRAVITY:   f32 = 0.003;
+const STIFFNESS: f32 = 0.2;
 
 const DEBUG_POSITION_SCALE: f32 = 0.1;
 const DEBUG_VIEWPORT_SCALE: i32 = 5;
 
 static QUAD_VERTEX_POSITIONS: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 static QUAD_INDICES:          [u32; 6] = [0, 1, 2, 1, 3, 2];
+
+const DRAW_LINES: bool = true;
+const TIME_STEPS: u32 = 5;
 
 #[repr(C)]
 struct ClothRenderVertex {
@@ -178,19 +179,19 @@ fn main() {
             let upper_left = (x + MESH_VERTICES_ACROSS * y)       as u32;
             let lower_left = (x + MESH_VERTICES_ACROSS * (y + 1)) as u32;
             let (upper_right, lower_right) = (upper_left + 1, lower_left + 1);
-            cloth_render_indices.extend_from_slice(&[
-                upper_left,  upper_right, lower_left,
-                upper_right, lower_right, lower_left,
-            ]);
-            // Uncomment for lines:
-            /*
-            cloth_render_indices.extend_from_slice(&[
-                upper_left,  upper_right,
-                upper_right, lower_right,
-                lower_right, lower_left,
-                lower_left,  upper_left,
-            ]);
-            */
+            if !DRAW_LINES {
+                cloth_render_indices.extend_from_slice(&[
+                    upper_left,  upper_right, lower_left,
+                    upper_right, lower_right, lower_left,
+                ]);
+            } else {
+                cloth_render_indices.extend_from_slice(&[
+                    upper_left,  upper_right,
+                    upper_right, lower_right,
+                    lower_right, lower_left,
+                    lower_left,  upper_left,
+                ]);
+            }
         }
     }
 
@@ -291,38 +292,43 @@ fn main() {
         // Start commands.
         device.begin_commands();
 
-        // Update the cloth.
-        device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
-            target: &RenderTarget::Framebuffer(&last_vertex_position_framebuffer),
-            program: &cloth_update_program.program,
-            vertex_array: &cloth_update_vertex_array,
-            primitive: Primitive::Triangles,
-            uniforms: &[
-                (&cloth_update_program.gravity_uniform,
-                 UniformData::Vec4(F32x4::new(0.0, -GRAVITY, 0.0, 0.0))),
-                (&cloth_update_program.spring_uniform, UniformData::Float(SPRING)),
-                (&cloth_update_program.last_vertex_positions_uniform,
-                 UniformData::TextureUnit(0)),
-                (&cloth_update_program.framebuffer_size_uniform,
-                 UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
-            ],
-            textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
-            viewport: RectI::new(Vector2I::splat(0), vertex_position_texture_size),
-            options: RenderOptions {
-                blend: Some(BlendState { func: BlendFunc::RGBOneAlphaOne, op: BlendOp::Subtract }),
-                ..RenderOptions::default()
-            }
-        });
+        for _ in 0..TIME_STEPS {
+            // Update the cloth.
+            device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
+                target: &RenderTarget::Framebuffer(&last_vertex_position_framebuffer),
+                program: &cloth_update_program.program,
+                vertex_array: &cloth_update_vertex_array,
+                primitive: Primitive::Triangles,
+                uniforms: &[
+                    (&cloth_update_program.gravity_uniform,
+                    UniformData::Vec4(F32x4::new(0.0, -GRAVITY, 0.0, 0.0))),
+                    (&cloth_update_program.stiffness_uniform, UniformData::Float(STIFFNESS)),
+                    (&cloth_update_program.last_vertex_positions_uniform,
+                    UniformData::TextureUnit(0)),
+                    (&cloth_update_program.framebuffer_size_uniform,
+                    UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
+                ],
+                textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
+                viewport: RectI::new(Vector2I::splat(0), vertex_position_texture_size),
+                options: RenderOptions {
+                    blend: Some(BlendState {
+                        func: BlendFunc::RGBOneAlphaOne,
+                        op: BlendOp::Subtract,
+                    }),
+                    ..RenderOptions::default()
+                }
+            });
 
-        // Swap the two vertex position framebuffers.
-        mem::swap(&mut last_vertex_position_framebuffer, &mut vertex_position_framebuffer);
+            // Swap the two vertex position framebuffers.
+            mem::swap(&mut last_vertex_position_framebuffer, &mut vertex_position_framebuffer);
+        }
 
         // Render the cloth.
-        device.draw_elements(MESH_INDEX_COUNT as u32, &RenderState {
+        device.draw_elements(cloth_render_indices.len() as u32, &RenderState {
             target: &RenderTarget::Default,
             program: &cloth_render_program.program,
             vertex_array: &cloth_render_vertex_array,
-            primitive: Primitive::Triangles,
+            primitive: if DRAW_LINES { Primitive::Lines } else { Primitive::Triangles },
             uniforms: &[
                 (&cloth_render_program.transform_uniform,
                  UniformData::Mat4([transform.c0, transform.c1, transform.c2, transform.c3])),
@@ -396,7 +402,7 @@ struct ClothUpdateProgram {
     last_vertex_positions_uniform: GLUniform,
     framebuffer_size_uniform: GLUniform,
     gravity_uniform: GLUniform,
-    spring_uniform: GLUniform,
+    stiffness_uniform: GLUniform,
 }
 
 impl ClothUpdateProgram {
@@ -406,14 +412,14 @@ impl ClothUpdateProgram {
         let last_vertex_positions_uniform = device.get_uniform(&program, "LastVertexPositions");
         let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
         let gravity_uniform = device.get_uniform(&program, "Gravity");
-        let spring_uniform = device.get_uniform(&program, "Spring");
+        let stiffness_uniform = device.get_uniform(&program, "Stiffness");
         ClothUpdateProgram {
             program,
             position_attribute,
             last_vertex_positions_uniform,
             framebuffer_size_uniform,
             gravity_uniform,
-            spring_uniform,
+            stiffness_uniform,
         }
     }
 }

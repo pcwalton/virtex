@@ -71,7 +71,7 @@ impl VirtualTextureManager2D {
         for y in tile_space_rect.min_y()..tile_space_rect.max_y() {
             for x in tile_space_rect.min_x()..tile_space_rect.max_x() {
                 let descriptor = TileDescriptor::new(Vector2I::new(x, y), lod);
-                if let RequestResult::CacheMiss(address) = self.texture.request_tile(&descriptor) {
+                if let RequestResult::CacheMiss(address) = self.texture.request_tile(descriptor) {
                     needed_tiles.push(TileRequest { descriptor, address });
                 }
             }

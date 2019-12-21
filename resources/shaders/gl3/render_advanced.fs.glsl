@@ -6,6 +6,8 @@ precision highp float;
 
 uniform sampler2D uMetadata;
 uniform sampler2D uTileCache;
+uniform int uCacheSeedA;
+uniform int uCacheSeedB;
 uniform int uCacheSize;
 uniform vec2 uTileSize;
 
@@ -14,13 +16,17 @@ in vec2 vTexCoord;
 out vec4 cFragColor;
 
 // Murmurhash3
-uint hashFinalize32(uint h) {
+uint hash32(uint h) {
     h ^= h >> 16u;
     h *= 0x85ebca6bu;
     h ^= h >> 13u;
     h *= 0xc2b2ae35u;
     h ^= h >> 16u;
     return h;
+}
+
+uint packTileDescriptor(uvec2 tilePosition, int mipLevel) {
+    return (uint(mipLevel) & 0x3fu) | (tilePosition.x << 6u) | (tilePosition.y << 19u);
 }
 
 float getMipLevel(vec2 texCoord) {
@@ -30,20 +36,18 @@ float getMipLevel(vec2 texCoord) {
 }
 
 void main() {
-    float neededMipLevel = ceil(getMipLevel(vTexCoord));
-    vec2 scaledTexCoord = vTexCoord * pow(2.0, neededMipLevel) / uTileSize;
-    vec2 neededTileOrigin = floor(scaledTexCoord);
+    int neededMipLevel = int(ceil(getMipLevel(vTexCoord)));
+    vec2 scaledTexCoord = vTexCoord * pow(2.0, float(neededMipLevel)) / uTileSize;
+    uvec2 neededTileOrigin = uvec2(floor(scaledTexCoord));
 
-    // FIXME(pcwalton): Optimize this.
-    int tileIndex = 0;
-    while (tileIndex < uCacheSize) {
-        vec4 tileMetadata = texelFetch(uMetadata, ivec2(tileIndex, 0), 0);
-        if (tileMetadata.xyz == vec3(neededTileOrigin, neededMipLevel))
-            break;
-        tileIndex++;
-    }
+    // FIXME(pcwalton): If this fails, keep searching.
+    uint hash = hash32(packTileDescriptor(neededTileOrigin, neededMipLevel));
+    ivec2 metadataCoord = ivec2(int((hash ^ uint(uCacheSeedA)) % uint(uCacheSize)), 0);
+    vec4 tileMetadata = texelFetch(uMetadata, metadataCoord, 0);
+    if (tileMetadata.xyz != vec3(ivec2(neededTileOrigin), neededMipLevel))
+        metadataCoord = ivec2(int((hash ^ uint(uCacheSeedB)) % uint(uCacheSize)), 2);
 
-    vec4 tileRect = texelFetch(uMetadata, ivec2(tileIndex, 1), 0);
+    vec4 tileRect = texelFetch(uMetadata, metadataCoord + ivec2(0, 1), 0);
     vec4 fragColor = texture(uTileCache, mix(tileRect.xy, tileRect.zw, fract(scaledTexCoord)));
     cFragColor = fragColor;
 }
