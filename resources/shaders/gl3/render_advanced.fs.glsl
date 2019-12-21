@@ -13,6 +13,16 @@ in vec2 vTexCoord;
 
 out vec4 cFragColor;
 
+// Murmurhash3
+uint hashFinalize32(uint h) {
+    h ^= h >> 16u;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13u;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16u;
+    return h;
+}
+
 float getMipLevel(vec2 texCoord) {
     vec2 dUVDX = dFdx(texCoord), dUVDY = dFdy(texCoord);
     float deltaMaxSq = max(dot(dUVDX, dUVDX), dot(dUVDY, dUVDY));

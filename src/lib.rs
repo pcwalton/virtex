@@ -3,17 +3,21 @@
 use pathfinder_geometry::vector::Vector2I;
 use std::collections::VecDeque;
 use std::collections::hash_map::HashMap;
+use std::fmt::{self, Debug, Formatter};
 
 pub mod manager2d;
 pub mod renderer_advanced;
 pub mod renderer_simple;
 
-#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Debug)]
-pub struct TileDescriptor {
-    pub x: i32,
-    pub y: i32,
-    pub lod: i32,
-}
+// 0123456789abcdef0123456789abcdef
+// yyyyyyyyyyyyyxxxxxxxxxxxxxLlllll
+// \_____ _____/\_____ _____/|\_ _/
+//       V            V      |  V
+//   Y position   X position | LOD
+//                           V
+//                      LOD sign bit
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct TileDescriptor(pub u32);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileAddress(pub u32);
@@ -151,5 +155,36 @@ impl VirtualTexture {
     pub fn address_to_tile_coords(&self, address: TileAddress) -> Vector2I {
         let tiles_across = self.tile_texture_tiles_across();
         Vector2I::new((address.0 % tiles_across) as i32, (address.0 / tiles_across) as i32)
+    }
+}
+
+impl TileDescriptor {
+    #[inline]
+    pub fn new(tile_position: Vector2I, lod: i8) -> TileDescriptor {
+        debug_assert!(tile_position.x() >= 0);
+        debug_assert!(tile_position.y() >= 0);
+        debug_assert!(tile_position.x() < 1 << 13);
+        debug_assert!(tile_position.y() < 1 << 13);
+        debug_assert!(lod >= -32 && lod < 32);
+        TileDescriptor(((tile_position.y() as u32) << 19) |
+                       ((tile_position.x() as u32) << 6) |
+                       lod as u32)
+    }
+
+    #[inline]
+    pub fn tile_position(self) -> Vector2I {
+        Vector2I::new(((self.0 >> 6) & ((1 << 13) - 1)) as i32, (self.0 >> 19) as i32)
+    }
+
+    #[inline]
+    pub fn lod(self) -> i8 {
+        // Sign-extend
+        ((self.0 << 2) as i8) >> 2
+    }
+}
+
+impl Debug for TileDescriptor {
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
+        write!(formatter, "TileDescriptor({:?} @ {})", self.tile_position(), self.lod())
     }
 }

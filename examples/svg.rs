@@ -271,9 +271,8 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
     while let Ok(msg) = receiver.recv() {
         println!("rendering {:?}, tile_size={}", msg.tile_request, TILE_SIZE);
         let descriptor = &msg.tile_request.descriptor;
-        let scene_offset =
-            Vector2F::new(descriptor.x as f32, descriptor.y as f32).scale(-(TILE_SIZE as f32));
-        let scale = f32::powf(2.0, descriptor.lod as f32) /* * global_scale_factor */;
+        let scene_offset = descriptor.tile_position().to_f32().scale(-(TILE_SIZE as f32));
+        let scale = f32::powf(2.0, descriptor.lod() as f32) /* * global_scale_factor */;
 
         let mut transform = Transform2F::default();
         transform = Transform2F::from_uniform_scale(scale) * transform;

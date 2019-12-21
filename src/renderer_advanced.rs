@@ -129,11 +129,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
                 continue;
             }
 
-            let descriptor = TileDescriptor {
-                x: pixel[0] as i32,
-                y: pixel[1] as i32,
-                lod: pixel[2] as i32,
-            };
+            let descriptor = TileDescriptor::new(Vector2I::new(pixel[0] as i32, pixel[1] as i32),
+                                                 pixel[2] as i8);
 
             if let RequestResult::CacheMiss(address) = self.manager
                                                            .texture
@@ -174,9 +171,11 @@ impl<D> AdvancedRenderer<D> where D: Device {
             let tile_rect = RectF::new(tile_origin + Vector2F::splat(1.0),
                                        Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
 
-            metadata[metadata_stride * 0 + cache_index * 4 + 0] = tile_descriptor.x as f32;
-            metadata[metadata_stride * 0 + cache_index * 4 + 1] = tile_descriptor.y as f32;
-            metadata[metadata_stride * 0 + cache_index * 4 + 2] = tile_descriptor.lod as f32;
+            let tile_position = tile_descriptor.tile_position();
+
+            metadata[metadata_stride * 0 + cache_index * 4 + 0] = tile_position.x() as f32;
+            metadata[metadata_stride * 0 + cache_index * 4 + 1] = tile_position.y() as f32;
+            metadata[metadata_stride * 0 + cache_index * 4 + 2] = tile_descriptor.lod() as f32;
             metadata[metadata_stride * 1 + cache_index * 4 + 0] = tile_rect.origin().x();
             metadata[metadata_stride * 1 + cache_index * 4 + 1] = tile_rect.origin().y();
             metadata[metadata_stride * 1 + cache_index * 4 + 2] = tile_rect.max_x();

@@ -47,11 +47,11 @@ impl<D> SimpleRenderer<D> where D: Device {
             let opacity = if render_lod_index == 0 { 1.0 } else { high_lod_opacity };
             for tile_cache_entry in self.manager.texture.tiles() {
                 let descriptor = match tile_cache_entry.rasterized_descriptor {
-                    Some(descriptor) if descriptor.lod == render_lod => descriptor,
+                    Some(descriptor) if descriptor.lod() == render_lod => descriptor,
                     _ => continue,
                 };
 
-                let tile_position = Vector2F::new(descriptor.x as f32, descriptor.y as f32);
+                let tile_position = descriptor.tile_position().to_f32();
                 let scaled_tile_size = tile_size as f32 / f32::powf(2.0, render_lod as f32);
                 let tile_rect = RectF::new(tile_position,
                                            Vector2F::splat(1.0)).scale(scaled_tile_size);

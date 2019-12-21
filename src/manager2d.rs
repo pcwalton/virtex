@@ -35,9 +35,10 @@ impl VirtualTextureManager2D {
         f32::max(self.transform.m11(), self.transform.m22())
     }
 
-    pub fn current_lods(&self) -> ArrayVec<[i32; 2]> {
+    // FIXME(pcwalton): This is wrong for negative LODs!
+    pub fn current_lods(&self) -> ArrayVec<[i8; 2]> {
         let scale = self.current_scale();
-        let lower_lod = 31 - ((scale.floor() as u32).leading_zeros() as i32);
+        let lower_lod = 31 - ((scale.floor() as u32).leading_zeros() as i8);
 
         let mut lods = ArrayVec::new();
         lods.push(lower_lod);
@@ -61,7 +62,7 @@ impl VirtualTextureManager2D {
         self.viewport_size
     }
 
-    fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileRequest>, lod: i32) {
+    fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileRequest>, lod: i8) {
         let viewport_rect = RectF::new(Vector2F::default(), self.viewport_size.to_f32());
         let transformed_viewport_rect = self.transform.inverse() * viewport_rect;
         let tile_size_inv = f32::powf(2.0, lod as f32) / self.texture.tile_size as f32;
@@ -69,7 +70,7 @@ impl VirtualTextureManager2D {
         println!("tile space rect={:?}", tile_space_rect);
         for y in tile_space_rect.min_y()..tile_space_rect.max_y() {
             for x in tile_space_rect.min_x()..tile_space_rect.max_x() {
-                let descriptor = TileDescriptor { x, y, lod };
+                let descriptor = TileDescriptor::new(Vector2I::new(x, y), lod);
                 if let RequestResult::CacheMiss(address) = self.texture.request_tile(&descriptor) {
                     needed_tiles.push(TileRequest { descriptor, address });
                 }
