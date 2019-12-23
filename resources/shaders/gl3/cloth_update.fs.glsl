@@ -19,7 +19,7 @@ void accumulate(vec2 offset, vec3 thisPosition, inout vec3 outAccel) {
         all(lessThan(neighborTexCoord, vec2(1.0)))) {
         vec3 neighborPosition = texture(uLastPositions, neighborTexCoord).xyz + vec3(offset, 0.0);
         vec3 displacement = neighborPosition - thisPosition;
-        float displacementLength = max(length(displacement), 0.1);
+        float displacementLength = length(displacement);
         outAccel += vec3(uStiffness * (displacementLength - length(offset))) *
             normalize(displacement);
     }

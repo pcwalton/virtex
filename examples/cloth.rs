@@ -44,8 +44,12 @@ const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 6;
 const MESH_CENTER_X:        f32 = MESH_PATCHES_ACROSS as f32 * 0.5;
 const MESH_CENTER_Y:        f32 = MESH_PATCHES_DOWN as f32 * 0.5;
 
-const GRAVITY:   f32 = 0.003;
-const STIFFNESS: f32 = 0.2;
+const GRAVITY:     f32 = 0.003;
+const STIFFNESS:   f32 = 0.2;
+const MAX_STRETCH: f32 = 0.1;
+
+const UPDATE_ITERATIONS: u32 = 10;
+const FIXUP_ITERATIONS:  u32 = 100;
 
 const DEBUG_POSITION_SCALE: f32 = 0.1;
 const DEBUG_VIEWPORT_SCALE: i32 = 5;
@@ -159,6 +163,7 @@ fn main() {
 
     // Create the cloth programs.
     let cloth_update_program = ClothUpdateProgram::new(&device, &resources);
+    let cloth_fixup_program = ClothFixupProgram::new(&device, &resources);
     let cloth_debug_lut_program = ClothDebugLUTProgram::new(&device, &resources);
     let cloth_render_program = ClothRenderProgram::new(&device, &resources);
 
@@ -240,6 +245,27 @@ fn main() {
                                  &cloth_update_program.position_attribute,
                                  &quad_vertex_attr_descriptor);
 
+    // Create the cloth fixup vertex array.
+    let cloth_fixup_vertex_array = device.create_vertex_array();
+    device.bind_buffer(&cloth_fixup_vertex_array,
+                       &cloth_update_vertex_buffer,
+                       BufferTarget::Vertex);
+    device.bind_buffer(&cloth_fixup_vertex_array,
+                       &cloth_update_index_buffer,
+                       BufferTarget::Index);
+    let quad_vertex_attr_descriptor = VertexAttrDescriptor {
+        size: 2,
+        class: VertexAttrClass::Float,
+        attr_type: VertexAttrType::F32,
+        stride: 4 * 2,
+        offset: 0,
+        divisor: 0,
+        buffer_index: 0,
+    };
+    device.configure_vertex_attr(&cloth_fixup_vertex_array,
+                                 &cloth_fixup_program.position_attribute,
+                                 &quad_vertex_attr_descriptor);
+
     // Create the cloth debug LUT vertex array.
     let cloth_debug_lut_vertex_array = device.create_vertex_array();
     device.bind_buffer(&cloth_debug_lut_vertex_array,
@@ -292,7 +318,7 @@ fn main() {
         // Start commands.
         device.begin_commands();
 
-        for _ in 0..TIME_STEPS {
+        for _ in 0..UPDATE_ITERATIONS {
             // Update the cloth.
             device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
                 target: &RenderTarget::Framebuffer(&last_vertex_position_framebuffer),
@@ -303,8 +329,7 @@ fn main() {
                     (&cloth_update_program.gravity_uniform,
                     UniformData::Vec4(F32x4::new(0.0, -GRAVITY, 0.0, 0.0))),
                     (&cloth_update_program.stiffness_uniform, UniformData::Float(STIFFNESS)),
-                    (&cloth_update_program.last_vertex_positions_uniform,
-                    UniformData::TextureUnit(0)),
+                    (&cloth_update_program.last_positions_uniform, UniformData::TextureUnit(0)),
                     (&cloth_update_program.framebuffer_size_uniform,
                     UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
                 ],
@@ -320,6 +345,28 @@ fn main() {
             });
 
             // Swap the two vertex position framebuffers.
+            mem::swap(&mut last_vertex_position_framebuffer, &mut vertex_position_framebuffer);
+        }
+
+        for _ in 0..FIXUP_ITERATIONS {
+            // Fix up the cloth so it doesn't explode.
+            device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
+                target: &RenderTarget::Framebuffer(&last_vertex_position_framebuffer),
+                program: &cloth_fixup_program.program,
+                vertex_array: &cloth_fixup_vertex_array,
+                primitive: Primitive::Triangles,
+                uniforms: &[
+                    (&cloth_fixup_program.last_positions_uniform, UniformData::TextureUnit(0)),
+                    (&cloth_fixup_program.framebuffer_size_uniform,
+                        UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
+                    (&cloth_fixup_program.max_stretch_uniform, UniformData::Float(MAX_STRETCH)),
+                ],
+                textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
+                viewport: RectI::new(Vector2I::splat(0), vertex_position_texture_size),
+                options: RenderOptions { blend: None, ..RenderOptions::default() },
+            });
+
+            // Swap the two vertex position framebuffers again.
             mem::swap(&mut last_vertex_position_framebuffer, &mut vertex_position_framebuffer);
         }
 
@@ -399,7 +446,7 @@ fn main() {
 struct ClothUpdateProgram {
     program: GLProgram,
     position_attribute: GLVertexAttr,
-    last_vertex_positions_uniform: GLUniform,
+    last_positions_uniform: GLUniform,
     framebuffer_size_uniform: GLUniform,
     gravity_uniform: GLUniform,
     stiffness_uniform: GLUniform,
@@ -409,17 +456,45 @@ impl ClothUpdateProgram {
     fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> ClothUpdateProgram {
         let program = device.create_program(resources, "cloth_update");
         let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
-        let last_vertex_positions_uniform = device.get_uniform(&program, "LastVertexPositions");
+        let last_positions_uniform = device.get_uniform(&program, "LastPositions");
         let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
         let gravity_uniform = device.get_uniform(&program, "Gravity");
         let stiffness_uniform = device.get_uniform(&program, "Stiffness");
         ClothUpdateProgram {
             program,
             position_attribute,
-            last_vertex_positions_uniform,
+            last_positions_uniform,
             framebuffer_size_uniform,
             gravity_uniform,
             stiffness_uniform,
+        }
+    }
+}
+
+struct ClothFixupProgram {
+    program: GLProgram,
+    position_attribute: GLVertexAttr,
+    last_positions_uniform: GLUniform,
+    framebuffer_size_uniform: GLUniform,
+    max_stretch_uniform: GLUniform,
+}
+
+impl ClothFixupProgram {
+    fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> ClothFixupProgram {
+        let program = device.create_program_from_shader_names(resources,
+                                                              "cloth_fixup",
+                                                              "cloth_update",
+                                                              "cloth_fixup");
+        let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
+        let last_positions_uniform = device.get_uniform(&program, "LastPositions");
+        let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
+        let max_stretch_uniform = device.get_uniform(&program, "MaxStretch");
+        ClothFixupProgram {
+            program,
+            position_attribute,
+            last_positions_uniform,
+            framebuffer_size_uniform,
+            max_stretch_uniform,
         }
     }
 }
