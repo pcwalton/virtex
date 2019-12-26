@@ -135,7 +135,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
             if let RequestResult::CacheMiss(address) = self.manager
                                                            .texture
                                                            .request_tile(descriptor) {
-                println!("{:?}", descriptor);
+                println!("cache miss: {:?}", descriptor);
                 needed_tiles.push(TileRequest { descriptor, address });
             }
         }

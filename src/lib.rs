@@ -176,7 +176,7 @@ pub(crate) struct TileHashSubtable {
     pub(crate) seed: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct TileHashEntry {
     pub(crate) descriptor: TileDescriptor,
     pub(crate) address: TileAddress,
@@ -211,10 +211,13 @@ impl TileHashTable {
         let mut entry = TileHashEntry { descriptor, address };
         for _ in 0..50 {
             for subtable in &mut self.subtables {
-                match subtable.insert(descriptor, address) {
+                match subtable.insert(entry.descriptor, entry.address) {
                     TileHashInsertResult::Inserted => return TileHashInsertResult::Inserted,
                     TileHashInsertResult::Replaced => return TileHashInsertResult::Replaced,
-                    TileHashInsertResult::Ejected(old_entry) => entry = old_entry,
+                    TileHashInsertResult::Ejected(old_entry) => {
+                        println!("ejected! old_entry={:?}", old_entry);
+                        entry = old_entry
+                    }
                 }
             }
         }
@@ -243,6 +246,7 @@ impl TileHashSubtable {
 
     fn get(&self, descriptor: TileDescriptor) -> Option<TileAddress> {
         let bucket_index = descriptor.hash(self.seed) as usize % TILE_HASH_TABLE_BUCKET_SIZE;
+        //println!("get(): descriptor = {:?}, bucket index = {:?}", descriptor, bucket_index);
         let bucket = &self.buckets[bucket_index];
         if !bucket.is_empty() && bucket.descriptor == descriptor {
             Some(bucket.address)
@@ -254,6 +258,7 @@ impl TileHashSubtable {
     fn insert(&mut self, descriptor: TileDescriptor, address: TileAddress)
               -> TileHashInsertResult {
         let bucket_index = descriptor.hash(self.seed) as usize % TILE_HASH_TABLE_BUCKET_SIZE;
+        //println!("insert(): descriptor = {:?}, bucket index = {:?}", descriptor, bucket_index);
         let mut bucket = &mut self.buckets[bucket_index];
         if bucket.is_empty() {
             *bucket = TileHashEntry { descriptor, address };

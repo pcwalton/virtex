@@ -7,11 +7,11 @@ use pathfinder_geometry::vector::{Vector2F, Vector2I, Vector3F, Vector4F};
 use pathfinder_gl::{GLDevice, GLProgram, GLUniform, GLVersion, GLVertexAttr};
 use pathfinder_gpu::resources::{FilesystemResourceLoader, ResourceLoader};
 use pathfinder_gpu::{BlendFunc, BlendOp, BlendState, BufferData, BufferTarget, BufferUploadMode};
-use pathfinder_gpu::{ClearOps, Device, Primitive, RenderOptions, RenderState, RenderTarget};
-use pathfinder_gpu::{TextureFormat, TextureDataRef, UniformData, VertexAttrClass};
-use pathfinder_gpu::{VertexAttrDescriptor, VertexAttrType};
-use pathfinder_simd::default::F32x4;
-use raqote::{DrawTarget, SolidSource, Transform};
+use pathfinder_gpu::{ClearOps, DepthFunc, DepthState, Device, Primitive, RenderOptions};
+use pathfinder_gpu::{RenderState, RenderTarget, TextureFormat, TextureDataRef, UniformData};
+use pathfinder_gpu::{VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
+use pathfinder_simd::default::{F32x2, F32x4};
+use raqote::DrawTarget;
 use resvg::backend_raqote;
 use resvg::usvg::{Options as UsvgOptions, Tree};
 use resvg::{Options as ResvgOptions, ScreenSize};
@@ -29,13 +29,13 @@ static DEFAULT_SVG_PATH: &'static str = "resources/svg/Ghostscript_Tiger.svg";
 const WINDOW_WIDTH:  i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
 
-const INITIAL_CAMERA_DISTANCE: f32 = 75.0;
+const INITIAL_CAMERA_DISTANCE: f32 = 15.0;
 
 const CAMERA_ROTATION_SPEED:    f32 = 0.01;
 const CAMERA_TRANSLATION_SPEED: f32 = 0.1;
 
-const MESH_PATCHES_ACROSS:  i32 = 50;
-const MESH_PATCHES_DOWN:    i32 = 50;
+const MESH_PATCHES_ACROSS:  i32 = 20;
+const MESH_PATCHES_DOWN:    i32 = 20;
 const MESH_PATCH_COUNT:     i32 = MESH_PATCHES_ACROSS * MESH_PATCHES_DOWN;
 const MESH_VERTICES_ACROSS: i32 = MESH_PATCHES_ACROSS + 1;
 const MESH_VERTICES_DOWN:   i32 = MESH_PATCHES_DOWN + 1;
@@ -44,21 +44,36 @@ const MESH_INDEX_COUNT:     i32 = MESH_PATCH_COUNT * 6;
 const MESH_CENTER_X:        f32 = MESH_PATCHES_ACROSS as f32 * 0.5;
 const MESH_CENTER_Y:        f32 = MESH_PATCHES_DOWN as f32 * 0.5;
 
-const GRAVITY:     f32 = 0.003;
-const STIFFNESS:   f32 = 0.2;
+const GRAVITY:     f32 = 0.001;
+const STIFFNESS:   f32 = 0.04;
 const MAX_STRETCH: f32 = 0.1;
 
-const UPDATE_ITERATIONS: u32 = 10;
-const FIXUP_ITERATIONS:  u32 = 100;
+const WIND_VARIATION_SPEED: f32 = 0.02;
+const WIND_SPEED:           f32 = 0.001;
 
-const DEBUG_POSITION_SCALE: f32 = 0.1;
+const UPDATE_ITERATIONS: u32 = 50;
+const FIXUP_ITERATIONS:  u32 = 1;
+
+const DEBUG_POSITION_SCALE: f32 = 0.2;
 const DEBUG_VIEWPORT_SCALE: i32 = 5;
 
 static QUAD_VERTEX_POSITIONS: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 static QUAD_INDICES:          [u32; 6] = [0, 1, 2, 1, 3, 2];
 
-const DRAW_LINES: bool = true;
-const TIME_STEPS: u32 = 5;
+/*
+static NEIGHBOR_OFFSET_VECTORS: [[f32; 2]; 8] = [
+    [-1.0, -1.0], [ 0.0, -1.0], [ 1.0, -1.0],
+    [-1.0,  0.0],               [ 1.0,  0.0],
+    [-1.0,  1.0], [ 0.0,  1.0], [ 1.0,  1.0],
+];
+*/
+static NEIGHBOR_OFFSET_VECTORS: [[f32; 2]; 4] = [
+                  [ 0.0, -1.0],
+    [-1.0,  0.0],               [ 1.0,  0.0],
+                  [ 0.0,  1.0],
+];
+
+const DRAW_LINES: bool = false;
 
 #[repr(C)]
 struct ClothRenderVertex {
@@ -97,7 +112,7 @@ fn main() {
 
     let context_attributes = ContextAttributes {
         version: SurfmanGLVersion::new(3, 3),
-        flags: ContextAttributeFlags::ALPHA,
+        flags: ContextAttributeFlags::ALPHA | ContextAttributeFlags::DEPTH,
     };
     let context_descriptor = surfman_device.create_context_descriptor(&context_attributes)
                                            .unwrap();
@@ -300,6 +315,7 @@ fn main() {
 
     // Enter the main loop.
     let (mut camera_angle, mut camera_distance) = (FRAC_PI_2, INITIAL_CAMERA_DISTANCE);
+    let mut time = 0.0;
     let mut exit = false;
     while !exit {
         // Calculate view.
@@ -318,6 +334,10 @@ fn main() {
         // Start commands.
         device.begin_commands();
 
+        let wind_speed = f32::sin(time * WIND_VARIATION_SPEED) * WIND_SPEED;
+        let mut global_force = Vector3F::new(0.0, -GRAVITY, 0.0);
+        global_force += Vector3F::new(0.0, 0.0, 1.0).scale(wind_speed);
+
         for _ in 0..UPDATE_ITERATIONS {
             // Update the cloth.
             device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
@@ -326,8 +346,8 @@ fn main() {
                 vertex_array: &cloth_update_vertex_array,
                 primitive: Primitive::Triangles,
                 uniforms: &[
-                    (&cloth_update_program.gravity_uniform,
-                    UniformData::Vec4(F32x4::new(0.0, -GRAVITY, 0.0, 0.0))),
+                    (&cloth_update_program.global_force_uniform,
+                    UniformData::Vec4(global_force.0)),
                     (&cloth_update_program.stiffness_uniform, UniformData::Float(STIFFNESS)),
                     (&cloth_update_program.last_positions_uniform, UniformData::TextureUnit(0)),
                     (&cloth_update_program.framebuffer_size_uniform,
@@ -346,28 +366,36 @@ fn main() {
 
             // Swap the two vertex position framebuffers.
             mem::swap(&mut last_vertex_position_framebuffer, &mut vertex_position_framebuffer);
-        }
 
-        for _ in 0..FIXUP_ITERATIONS {
             // Fix up the cloth so it doesn't explode.
-            device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
-                target: &RenderTarget::Framebuffer(&last_vertex_position_framebuffer),
-                program: &cloth_fixup_program.program,
-                vertex_array: &cloth_fixup_vertex_array,
-                primitive: Primitive::Triangles,
-                uniforms: &[
-                    (&cloth_fixup_program.last_positions_uniform, UniformData::TextureUnit(0)),
-                    (&cloth_fixup_program.framebuffer_size_uniform,
-                        UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
-                    (&cloth_fixup_program.max_stretch_uniform, UniformData::Float(MAX_STRETCH)),
-                ],
-                textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
-                viewport: RectI::new(Vector2I::splat(0), vertex_position_texture_size),
-                options: RenderOptions { blend: None, ..RenderOptions::default() },
-            });
+            for _ in 0..FIXUP_ITERATIONS {
+                for neighbor_offset_vector in &NEIGHBOR_OFFSET_VECTORS {
+                    device.draw_elements(QUAD_INDICES.len() as u32, &RenderState {
+                        target: &RenderTarget::Framebuffer(&last_vertex_position_framebuffer),
+                        program: &cloth_fixup_program.program,
+                        vertex_array: &cloth_fixup_vertex_array,
+                        primitive: Primitive::Triangles,
+                        uniforms: &[
+                            (&cloth_fixup_program.last_positions_uniform,
+                             UniformData::TextureUnit(0)),
+                            (&cloth_fixup_program.framebuffer_size_uniform,
+                            UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
+                            (&cloth_fixup_program.neighbor_offset_uniform,
+                            UniformData::Vec2(F32x2::new(neighbor_offset_vector[0],
+                                                         neighbor_offset_vector[1]))),
+                            (&cloth_fixup_program.max_stretch_uniform,
+                            UniformData::Float(MAX_STRETCH)),
+                        ],
+                        textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
+                        viewport: RectI::new(Vector2I::splat(0), vertex_position_texture_size),
+                        options: RenderOptions { blend: None, ..RenderOptions::default() },
+                    });
 
-            // Swap the two vertex position framebuffers again.
-            mem::swap(&mut last_vertex_position_framebuffer, &mut vertex_position_framebuffer);
+                    // Swap the two vertex position framebuffers again.
+                    mem::swap(&mut last_vertex_position_framebuffer,
+                              &mut vertex_position_framebuffer);
+                }
+            }
         }
 
         // Render the cloth.
@@ -389,8 +417,10 @@ fn main() {
             options: RenderOptions {
                 clear_ops: ClearOps {
                     color: Some(ColorF::new(0.5, 0.5, 0.5, 1.0)),
+                    depth: Some(1.0),
                     ..ClearOps::default()
                 },
+                depth: Some(DepthState { func: DepthFunc::Less, write: true }),
                 ..RenderOptions::default()
             }
         });
@@ -440,6 +470,8 @@ fn main() {
                 _ => {}
             }
         });
+
+        time += 1.0;
     }
 }
 
@@ -448,7 +480,7 @@ struct ClothUpdateProgram {
     position_attribute: GLVertexAttr,
     last_positions_uniform: GLUniform,
     framebuffer_size_uniform: GLUniform,
-    gravity_uniform: GLUniform,
+    global_force_uniform: GLUniform,
     stiffness_uniform: GLUniform,
 }
 
@@ -458,14 +490,14 @@ impl ClothUpdateProgram {
         let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
         let last_positions_uniform = device.get_uniform(&program, "LastPositions");
         let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
-        let gravity_uniform = device.get_uniform(&program, "Gravity");
+        let global_force_uniform = device.get_uniform(&program, "GlobalForce");
         let stiffness_uniform = device.get_uniform(&program, "Stiffness");
         ClothUpdateProgram {
             program,
             position_attribute,
             last_positions_uniform,
             framebuffer_size_uniform,
-            gravity_uniform,
+            global_force_uniform,
             stiffness_uniform,
         }
     }
@@ -476,6 +508,7 @@ struct ClothFixupProgram {
     position_attribute: GLVertexAttr,
     last_positions_uniform: GLUniform,
     framebuffer_size_uniform: GLUniform,
+    neighbor_offset_uniform: GLUniform,
     max_stretch_uniform: GLUniform,
 }
 
@@ -488,12 +521,14 @@ impl ClothFixupProgram {
         let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
         let last_positions_uniform = device.get_uniform(&program, "LastPositions");
         let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
+        let neighbor_offset_uniform = device.get_uniform(&program, "NeighborOffset");
         let max_stretch_uniform = device.get_uniform(&program, "MaxStretch");
         ClothFixupProgram {
             program,
             position_attribute,
             last_positions_uniform,
             framebuffer_size_uniform,
+            neighbor_offset_uniform,
             max_stretch_uniform,
         }
     }
@@ -514,7 +549,7 @@ impl ClothDebugLUTProgram {
                                                               "cloth_debug_lut");
         let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
         let positions_uniform = device.get_uniform(&program, "Positions");
-        let scale_uniform = device.get_uniform(&program, "Scale");
+        let scale_uniform = device.get_uniform(&program, "PositionScale");
         ClothDebugLUTProgram { program, position_attribute, positions_uniform, scale_uniform }
     }
 }

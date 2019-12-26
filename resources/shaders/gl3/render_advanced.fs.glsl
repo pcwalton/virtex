@@ -44,8 +44,14 @@ void main() {
     uint hash = hash32(packTileDescriptor(neededTileOrigin, neededMipLevel));
     ivec2 metadataCoord = ivec2(int((hash ^ uint(uCacheSeedA)) % uint(uCacheSize)), 0);
     vec4 tileMetadata = texelFetch(uMetadata, metadataCoord, 0);
-    if (tileMetadata.xyz != vec3(ivec2(neededTileOrigin), neededMipLevel))
+    if (tileMetadata.xyz != vec3(ivec2(neededTileOrigin), neededMipLevel)) {
         metadataCoord = ivec2(int((hash ^ uint(uCacheSeedB)) % uint(uCacheSize)), 2);
+        tileMetadata = texelFetch(uMetadata, metadataCoord, 0);
+        if (tileMetadata.xyz != vec3(ivec2(neededTileOrigin), neededMipLevel)) {
+            cFragColor = vec4(0.0);
+            return;
+        }
+    }
 
     vec4 tileRect = texelFetch(uMetadata, metadataCoord + ivec2(0, 1), 0);
     vec4 fragColor = texture(uTileCache, mix(tileRect.xy, tileRect.zw, fract(scaledTexCoord)));

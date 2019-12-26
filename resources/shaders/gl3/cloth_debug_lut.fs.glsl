@@ -12,5 +12,5 @@ in vec2 vTexCoord;
 out vec4 cFragColor;
 
 void main() {
-    cFragColor = vec4(abs(texture(uPositions, vTexCoord).rgb * vec3(0.02)), 1.0);
+    cFragColor = vec4(abs(texture(uPositions, vTexCoord).rgb * vec3(uPositionScale)), 1.0);
 }

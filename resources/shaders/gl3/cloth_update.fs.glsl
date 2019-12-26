@@ -4,7 +4,7 @@
 
 precision highp float;
 
-uniform vec4 uGravity;
+uniform vec4 uGlobalForce;
 uniform float uStiffness;
 uniform sampler2D uLastPositions;
 uniform vec2 uFramebufferSize;
@@ -32,7 +32,7 @@ void main() {
     vec3 accel = vec3(0.0);
     if (fragCoord.y + 1.0 < uFramebufferSize.y ||
         (fragCoord.x > 0.0 && fragCoord.x + 1.0 < uFramebufferSize.x)) {
-        accel += uGravity.xyz;
+        accel += uGlobalForce.xyz;
         accumulate(vec2(-1.0, -1.0), thisPosition, accel);
         accumulate(vec2( 0.0, -1.0), thisPosition, accel);
         accumulate(vec2( 1.0, -1.0), thisPosition, accel);
