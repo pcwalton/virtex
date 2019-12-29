@@ -12,7 +12,7 @@ use pathfinder_gpu::{RenderOptions, RenderState, RenderTarget, TextureData, Text
 use pathfinder_gpu::{TextureFormat, UniformData, VertexAttrClass};
 use pathfinder_gpu::{VertexAttrDescriptor, VertexAttrType};
 use pathfinder_simd::default::F32x2;
-use std::slice;
+use std::i8;
 
 static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
 static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
@@ -156,6 +156,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
         let tile_backing_size = self.manager.texture.tile_backing_size() as f32;
         let tiles = self.manager.texture.tiles();
 
+        let (mut min_lod, mut max_lod) = (i8::MAX, i8::MIN);
+
         for (subtable_index, subtable) in self.manager.texture.cache.subtables.iter().enumerate() {
             for (bucket_index, &bucket) in subtable.buckets.iter().enumerate() {
                 if bucket.is_empty() {
@@ -179,21 +181,22 @@ impl<D> AdvancedRenderer<D> where D: Device {
 
                 let tile_position = tile_descriptor.tile_position();
 
-                // FIXME(pcwalton): Boy, this is ugly.
-                metadata[metadata_stride * (subtable_index * 2 + 0) + bucket_index * 4 + 0] =
-                    tile_position.x() as f32;
-                metadata[metadata_stride * (subtable_index * 2 + 0) + bucket_index * 4 + 1] =
-                    tile_position.y() as f32;
-                metadata[metadata_stride * (subtable_index * 2 + 0) + bucket_index * 4 + 2] =
-                    tile_descriptor.lod() as f32;
-                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 0] =
-                    tile_rect.origin().x();
-                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 1] =
-                    tile_rect.origin().y();
-                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 2] =
-                    tile_rect.max_x();
-                metadata[metadata_stride * (subtable_index * 2 + 1) + bucket_index * 4 + 3] =
-                    tile_rect.max_y();
+                let tile_lod = tile_descriptor.lod();
+                min_lod = i8::min(min_lod, tile_lod);
+                max_lod = i8::max(max_lod, tile_lod);
+
+                let metadata_start_index = metadata_stride * (subtable_index * 2 + 0) +
+                    bucket_index * 4;
+                let rect_start_index = metadata_stride * (subtable_index * 2 + 1) +
+                    bucket_index * 4;
+
+                metadata[metadata_start_index + 0] = tile_position.x() as f32;
+                metadata[metadata_start_index + 1] = tile_position.y() as f32;
+                metadata[metadata_start_index + 2] = tile_lod as f32;
+                metadata[rect_start_index + 0] = tile_rect.origin().x();
+                metadata[rect_start_index + 1] = tile_rect.origin().y();
+                metadata[rect_start_index + 2] = tile_rect.max_x();
+                metadata[rect_start_index + 3] = tile_rect.max_y();
             }
         }
 
@@ -204,7 +207,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
         let quad_rect =
             RectI::new(Vector2I::default(), self.manager.texture.virtual_texture_size).to_f32();
         let tile_size = Vector2F::splat(self.manager.texture.tile_size() as f32);
-        println!("quad_rect={:?} tile_size={:?}", quad_rect, tile_size);
+        println!("lod range=[{}, {}] quad_rect={:?} tile_size={:?}",
+                 min_lod, max_lod, quad_rect, tile_size);
 
         device.begin_commands();
         device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {
@@ -233,6 +237,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
                  UniformData::Int(table_size as i32)),
                 (&self.render_vertex_array.render_program.tile_size_uniform,
                  UniformData::Vec2(tile_size.0)),
+                (&self.render_vertex_array.render_program.lod_range_uniform,
+                 UniformData::Vec2(F32x2::new(min_lod as f32, max_lod as f32))),
             ],
             textures: &[&self.metadata_texture, &self.cache_texture],
             viewport: RectI::new(Vector2I::splat(0), self.manager.viewport_size()),
@@ -388,6 +394,7 @@ struct RenderAdvancedProgram<D> where D: Device {
     cache_seed_b_uniform: D::Uniform,
     cache_size_uniform: D::Uniform,
     tile_size_uniform: D::Uniform,
+    lod_range_uniform: D::Uniform,
 }
 
 impl<D> RenderAdvancedProgram<D> where D: Device {
@@ -404,6 +411,7 @@ impl<D> RenderAdvancedProgram<D> where D: Device {
         let cache_seed_b_uniform = device.get_uniform(&program, "CacheSeedB");
         let cache_size_uniform = device.get_uniform(&program, "CacheSize");
         let tile_size_uniform = device.get_uniform(&program, "TileSize");
+        let lod_range_uniform = device.get_uniform(&program, "LODRange");
         RenderAdvancedProgram {
             program,
             position_attribute,
@@ -417,6 +425,7 @@ impl<D> RenderAdvancedProgram<D> where D: Device {
             cache_seed_b_uniform,
             cache_size_uniform,
             tile_size_uniform,
+            lod_range_uniform,
         }
     }
 }

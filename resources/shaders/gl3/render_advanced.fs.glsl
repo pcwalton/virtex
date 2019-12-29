@@ -10,6 +10,7 @@ uniform int uCacheSeedA;
 uniform int uCacheSeedB;
 uniform int uCacheSize;
 uniform vec2 uTileSize;
+uniform vec2 uLODRange;
 
 in vec2 vTexCoord;
 
@@ -35,25 +36,85 @@ float getMipLevel(vec2 texCoord) {
     return -0.5 * log2(deltaMaxSq);
 }
 
-void main() {
-    int neededMipLevel = int(ceil(getMipLevel(vTexCoord)));
+bool lookupTileMetadataInSubtable(vec3 neededMetadata,
+                                  uint hash,
+                                  uint cacheSeed,
+                                  int table,
+                                  out ivec2 outMetadataCoord) {
+    ivec2 metadataCoord = ivec2(int((hash ^ cacheSeed) % uint(uCacheSize)), table * 2);
+    vec3 tileMetadata = texelFetch(uMetadata, metadataCoord, 0).rgb;
+    outMetadataCoord = metadataCoord;
+    return tileMetadata == neededMetadata;
+}
+
+bool lookupTileMetadata(int neededMipLevel,
+                        out ivec2 outMetadataCoord,
+                        out vec2 outScaledTexCoord) {
     vec2 scaledTexCoord = vTexCoord * pow(2.0, float(neededMipLevel)) / uTileSize;
     uvec2 neededTileOrigin = uvec2(floor(scaledTexCoord));
+    vec3 neededMetadata = vec3(ivec2(neededTileOrigin), neededMipLevel);
 
-    // FIXME(pcwalton): If this fails, keep searching.
     uint hash = hash32(packTileDescriptor(neededTileOrigin, neededMipLevel));
-    ivec2 metadataCoord = ivec2(int((hash ^ uint(uCacheSeedA)) % uint(uCacheSize)), 0);
-    vec4 tileMetadata = texelFetch(uMetadata, metadataCoord, 0);
-    if (tileMetadata.xyz != vec3(ivec2(neededTileOrigin), neededMipLevel)) {
-        metadataCoord = ivec2(int((hash ^ uint(uCacheSeedB)) % uint(uCacheSize)), 2);
-        tileMetadata = texelFetch(uMetadata, metadataCoord, 0);
-        if (tileMetadata.xyz != vec3(ivec2(neededTileOrigin), neededMipLevel)) {
-            cFragColor = vec4(0.0);
-            return;
-        }
+    ivec2 metadataCoord;
+    bool found = lookupTileMetadataInSubtable(neededMetadata,
+                                              hash,
+                                              uint(uCacheSeedA),
+                                              0,
+                                              metadataCoord);
+    if (!found) {
+        found = lookupTileMetadataInSubtable(neededMetadata,
+                                             hash,
+                                             uint(uCacheSeedB),
+                                             1,
+                                             metadataCoord);
     }
 
+    outMetadataCoord = metadataCoord;
+    outScaledTexCoord = scaledTexCoord;
+    return found;
+}
+
+vec4 getColor(ivec2 metadataCoord, vec2 scaledTexCoord) {
     vec4 tileRect = texelFetch(uMetadata, metadataCoord + ivec2(0, 1), 0);
-    vec4 fragColor = texture(uTileCache, mix(tileRect.xy, tileRect.zw, fract(scaledTexCoord)));
-    cFragColor = fragColor;
+    return texture(uTileCache, mix(tileRect.xy, tileRect.zw, fract(scaledTexCoord)));
+}
+
+void main() {
+    float desiredMipLevel = getMipLevel(vTexCoord);
+    ivec2 lodRange = ivec2(uLODRange);
+    ivec2 desiredMipLevels = clamp(ivec2(floor(desiredMipLevel), ceil(desiredMipLevel)),
+                                   lodRange.x,
+                                   lodRange.y);
+
+    int lowerMipLevel, upperMipLevel;
+    ivec2 lowerMetadataCoord, upperMetadataCoord;
+    vec2 lowerScaledTexCoord, upperScaledTexCoord;
+    bool lowerFound = false, upperFound = false;
+    for (lowerMipLevel = desiredMipLevels.x;
+         !lowerFound && lowerMipLevel >= lodRange.x;
+         lowerMipLevel--)
+        lowerFound = lookupTileMetadata(lowerMipLevel, lowerMetadataCoord, lowerScaledTexCoord);
+    for (upperMipLevel = desiredMipLevels.y;
+         !upperFound && upperMipLevel <= lodRange.y;
+         upperMipLevel++)
+        upperFound = lookupTileMetadata(upperMipLevel, upperMetadataCoord, upperScaledTexCoord);
+
+    vec4 lowerColor, upperColor;
+    if (lowerFound)
+        lowerColor = getColor(lowerMetadataCoord, lowerScaledTexCoord);
+    if (upperFound)
+        upperColor = getColor(upperMetadataCoord, upperScaledTexCoord);
+
+    if (lowerFound && upperFound) {
+        float fraction = (desiredMipLevel - float(lowerMipLevel)) /
+            float(upperMipLevel - lowerMipLevel);
+        cFragColor = mix(lowerColor, upperColor, fraction);
+    } else if (lowerFound) {
+        cFragColor = lowerColor;
+    } else if (upperFound) {
+        cFragColor = upperColor;
+    } else {
+        // TODO(pcwalton): Background color.
+        cFragColor = vec4(0.0);
+    }
 }
