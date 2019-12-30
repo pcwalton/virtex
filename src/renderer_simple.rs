@@ -39,7 +39,7 @@ impl<D> SimpleRenderer<D> where D: Device {
         // Render the two LODs in order.
         let current_scale = self.manager.current_scale();
         let current_lod = current_scale.log2();
-        println!("current_lod = {}", current_lod);
+        debug!("current_lod = {}", current_lod);
         let current_lods = self.manager.current_lods();
         let high_lod_opacity = current_lod.fract();
 
@@ -70,7 +70,6 @@ impl<D> SimpleRenderer<D> where D: Device {
                 let tile_tex_rect =
                     RectI::new(tile_tex_origin, tile_tex_size).to_f32().scale_xy(cache_tex_scale);
 
-                //println!("tile_tex_rect={:?}", tile_tex_rect);
                 device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {
                     target: &RenderTarget::Default,
                     program: &self.render_vertex_array.render_program.program,

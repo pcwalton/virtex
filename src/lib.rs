@@ -1,5 +1,8 @@
 // virtex/src/lib.rs
 
+#[macro_use]
+extern crate log;
+
 use pathfinder_geometry::vector::Vector2I;
 use rand::{self, Rng};
 use std::collections::VecDeque;
@@ -268,7 +271,7 @@ impl TileHashTable {
                     TileHashSubinsertResult::Inserted => return TileHashInsertResult::Inserted,
                     TileHashSubinsertResult::Replaced => return TileHashInsertResult::Replaced,
                     TileHashSubinsertResult::Ejected(old_entry) => {
-                        println!("ejected! old_entry={:?}", old_entry);
+                        debug!("ejected! old_entry={:?}", old_entry);
                         entry = old_entry
                     }
                 }
@@ -292,7 +295,7 @@ impl TileHashTable {
     }
 
     fn rebuild(&mut self, new_bucket_size: u32) {
-        println!("*** REBUILDING {} ***", new_bucket_size);
+        debug!("*** REBUILDING {} ***", new_bucket_size);
         let old_table = mem::replace(self, TileHashTable::new(new_bucket_size));
         for old_subtable in &old_table.subtables {
             for old_bucket in &old_subtable.buckets {
@@ -312,7 +315,6 @@ impl TileHashSubtable {
 
     fn get(&self, descriptor: TileDescriptor) -> Option<TileAddress> {
         let bucket_index = descriptor.hash(self.seed) as usize % self.buckets.len();
-        //println!("get(): descriptor = {:?}, bucket index = {:?}", descriptor, bucket_index);
         let bucket = &self.buckets[bucket_index];
         if !bucket.is_empty() && bucket.descriptor == descriptor {
             Some(bucket.address)
@@ -324,7 +326,6 @@ impl TileHashSubtable {
     fn insert(&mut self, descriptor: TileDescriptor, address: TileAddress)
               -> TileHashSubinsertResult {
         let bucket_index = descriptor.hash(self.seed) as usize % self.buckets.len();
-        //println!("insert(): descriptor = {:?}, bucket index = {:?}", descriptor, bucket_index);
         let mut bucket = &mut self.buckets[bucket_index];
         if bucket.is_empty() {
             *bucket = TileHashEntry { descriptor, address };

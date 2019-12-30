@@ -51,7 +51,6 @@ impl VirtualTextureManager2D {
 
     pub fn request_needed_tiles(&mut self, needed_tiles: &mut Vec<TileRequest>) {
         let lods = self.current_lods();
-        println!("lods={:?}", lods);
         for lod in lods {
             self.request_needed_tiles_for_lod(needed_tiles, lod);
         }
@@ -67,7 +66,6 @@ impl VirtualTextureManager2D {
         let transformed_viewport_rect = self.transform.inverse() * viewport_rect;
         let tile_size_inv = f32::powf(2.0, lod as f32) / self.texture.tile_size as f32;
         let tile_space_rect = transformed_viewport_rect.scale(tile_size_inv).round_out().to_i32();
-        println!("tile space rect={:?}", tile_space_rect);
         for y in tile_space_rect.min_y()..tile_space_rect.max_y() {
             for x in tile_space_rect.min_x()..tile_space_rect.max_x() {
                 let descriptor = TileDescriptor::new(Vector2I::new(x, y), lod);

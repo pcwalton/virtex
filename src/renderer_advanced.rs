@@ -1,7 +1,7 @@
 // virtex/src/renderer_advanced.rs
 
 use crate::manager2d::{TileRequest, VirtualTextureManager2D};
-use crate::{RequestResult, TileCacheEntry, TileDescriptor};
+use crate::{RequestResult, TileDescriptor};
 
 use pathfinder_content::color::ColorF;
 use pathfinder_geometry::rect::{RectF, RectI};
@@ -136,7 +136,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
             if let RequestResult::CacheMiss(address) = self.manager
                                                            .texture
                                                            .request_tile(descriptor) {
-                println!("cache miss: {:?}", descriptor);
+                debug!("cache miss: {:?}", descriptor);
                 needed_tiles.push(TileRequest { descriptor, address });
             }
         }
@@ -217,8 +217,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
         let quad_rect =
             RectI::new(Vector2I::default(), self.manager.texture.virtual_texture_size).to_f32();
         let tile_size = Vector2F::splat(self.manager.texture.tile_size() as f32);
-        println!("lod range=[{}, {}] quad_rect={:?} tile_size={:?}",
-                 min_lod, max_lod, quad_rect, tile_size);
+        debug!("lod range=[{}, {}] quad_rect={:?} tile_size={:?}",
+               min_lod, max_lod, quad_rect, tile_size);
 
         device.begin_commands();
         device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {

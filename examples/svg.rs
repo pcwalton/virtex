@@ -1,5 +1,9 @@
 // virtex/examples/svg.rs
 
+#[macro_use]
+extern crate log;
+
+use env_logger;
 use pathfinder_geometry::rect::RectI;
 use pathfinder_geometry::transform2d::Transform2F;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
@@ -33,21 +37,17 @@ const TILE_BACKING_SIZE: u32 = 258;
 const TILE_HASH_INITIAL_BUCKET_SIZE: u32 = 64;
 const TILE_CACHE_WIDTH: u32 = CACHE_TILES_ACROSS * TILE_BACKING_SIZE;
 const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_BACKING_SIZE;
-const DEFAULT_GLOBAL_SCALE_FACTOR: f32 = 5.0;
 
 static BACKGROUND_COLOR: SolidSource = SolidSource { r: 255, g: 255, b: 255, a: 255 };
 
 static DEFAULT_SVG_PATH: &'static str = "resources/svg/Ghostscript_Tiger.svg";
 
 fn main() {
+    env_logger::init();
+
     let svg_path = match env::args().nth(1) {
         Some(path) => path,
         None => DEFAULT_SVG_PATH.to_owned(),
-    };
-
-    let global_scale_factor: f32 = match env::args().nth(2) {
-        None => DEFAULT_GLOBAL_SCALE_FACTOR,
-        Some(factor) => factor.parse().unwrap(),
     };
 
     let mut event_loop = EventsLoop::new();
@@ -93,10 +93,7 @@ fn main() {
     let (mut main_to_rasterizer_sender, main_to_rasterizer_receiver) = mpsc::channel();
     let (rasterizer_to_main_sender, mut rasterizer_to_main_receiver) = mpsc::channel();
     let _raster_thread = thread::spawn(move || {
-        rasterizer_thread(rasterizer_to_main_sender,
-                          main_to_rasterizer_receiver,
-                          svg_path,
-                          global_scale_factor);
+        rasterizer_thread(rasterizer_to_main_sender, main_to_rasterizer_receiver, svg_path);
     });
 
     // Wait for the SVG to be loaded.
@@ -120,7 +117,7 @@ fn main() {
     let mut needed_tiles = vec![];
 
     while !exit {
-        println!("--- begin frame ---");
+        debug!("--- begin frame ---");
         //renderer.manager_mut().request_needed_tiles(&mut needed_tiles);
         renderer.prepare(&device, &mut needed_tiles);
         rasterize_needed_tiles(&device,
@@ -194,7 +191,6 @@ fn rasterize_needed_tiles(device: &GLDevice,
     }
 
     // FIXME(pcwalton): Squash multiple upload-to-texture operations.
-    let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
     while let Ok(msg) = receiver.try_recv() {
         let (tile_request, tile_origin, new_tile_pixels) = match msg {
             RasterizerToMainMsg::SVGLoaded { .. } => unreachable!(),
@@ -212,9 +208,9 @@ fn rasterize_needed_tiles(device: &GLDevice,
                                  cache_texture_rect,
                                  TextureDataRef::U8(&new_tile_pixels));
 
-        println!("marking {:?}/{:?} as rasterized!",
-                 tile_request.address,
-                 tile_request.descriptor);
+        debug!("marking {:?}/{:?} as rasterized!",
+               tile_request.address,
+               tile_request.descriptor);
     }
 }
 
@@ -257,8 +253,7 @@ enum RasterizerToMainMsg {
 
 fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
                      receiver: Receiver<MainToRasterizerMsg>,
-                     svg_path: String,
-                     global_scale_factor: f32) {
+                     svg_path: String) {
     // Load the SVG.
     let svg_tree = Tree::from_file(&svg_path, &UsvgOptions::default()).unwrap();
 
@@ -269,13 +264,11 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
     sender.send(RasterizerToMainMsg::SVGLoaded { size: svg_size }).unwrap();
 
     // Initialize the cache.
-    let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
-    let mut cache_pixels = vec![0; TILE_BACKING_SIZE as usize * TILE_BACKING_SIZE as usize * 4];
     let mut cache_draw_target = DrawTarget::new(TILE_BACKING_SIZE as i32,
                                                 TILE_BACKING_SIZE as i32);
 
     while let Ok(msg) = receiver.recv() {
-        println!("rendering {:?}, tile_size={}", msg.tile_request, TILE_SIZE);
+        debug!("rendering {:?}, tile_size={}", msg.tile_request, TILE_SIZE);
         let descriptor = &msg.tile_request.descriptor;
         let scene_offset = descriptor.tile_position().to_f32().scale(-(TILE_SIZE as f32));
         let scale = f32::powf(2.0, descriptor.lod() as f32) /* * global_scale_factor */;
@@ -284,9 +277,7 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
         transform = Transform2F::from_uniform_scale(scale) * transform;
         transform = Transform2F::from_translation(scene_offset) * transform;
         transform = Transform2F::from_translation(Vector2F::splat(1.0)) * transform;
-        //transform = Transform2F::from_translation(tile_offset.to_f32()) * transform;
 
-        println!("... transform={:?}", transform);
         cache_draw_target.set_transform(&Transform::row_major(transform.matrix.m11(),
                                                               transform.matrix.m21(),
                                                               transform.matrix.m12(),
@@ -299,9 +290,6 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
                                          svg_screen_size,
                                          &mut cache_draw_target);
         cache_draw_target.set_transform(&Transform::identity());
-
-        let tile_rect = RectI::new(msg.tile_origin,
-                                   Vector2I::splat(1)).scale(TILE_BACKING_SIZE as i32);
 
         let mut cache_pixels =
             vec![0; TILE_BACKING_SIZE as usize * TILE_BACKING_SIZE as usize * 4];
