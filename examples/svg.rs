@@ -22,7 +22,7 @@ use std::thread;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
 use virtex::VirtualTexture;
-use virtex::manager2d::{TileRequest, VirtualTextureManager2D};
+use virtex::manager::{TileRequest, VirtualTextureManager};
 use virtex::renderer_advanced::AdvancedRenderer;
 use winit::dpi::LogicalSize;
 use winit::{DeviceEvent, Event, EventsLoop, KeyboardInput, ModifiersState, MouseScrollDelta};
@@ -111,7 +111,7 @@ fn main() {
                                               TILE_HASH_INITIAL_BUCKET_SIZE);
 
     // Initialize the virtual texture manger and renderer.
-    let manager = VirtualTextureManager2D::new(virtual_texture, physical_window_size);
+    let manager = VirtualTextureManager::new(virtual_texture, physical_window_size);
     let mut renderer = AdvancedRenderer::new(&device, manager, &resources);
 
     let mut exit = false;
@@ -191,7 +191,6 @@ fn rasterize_needed_tiles(device: &GLDevice,
         }
     }
 
-    // FIXME(pcwalton): Squash multiple upload-to-texture operations.
     while let Ok(msg) = receiver.try_recv() {
         let (tile_request, tile_origin, new_tile_pixels) = match msg {
             RasterizerToMainMsg::SVGLoaded { .. } => unreachable!(),

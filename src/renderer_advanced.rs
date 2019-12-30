@@ -1,6 +1,6 @@
 // virtex/src/renderer_advanced.rs
 
-use crate::manager2d::{TileRequest, VirtualTextureManager2D};
+use crate::manager::{TileRequest, VirtualTextureManager};
 use crate::{RequestResult, TileDescriptor};
 
 use pathfinder_content::color::ColorF;
@@ -20,7 +20,7 @@ static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
 const DERIVATIVES_VIEWPORT_SCALE_FACTOR: i32 = 16;
 
 pub struct AdvancedRenderer<D> where D: Device {
-    manager: VirtualTextureManager2D,
+    manager: VirtualTextureManager,
     prepare_vertex_array: PrepareAdvancedVertexArray<D>,
     render_vertex_array: RenderAdvancedVertexArray<D>,
     cache_texture: D::Texture,
@@ -29,7 +29,7 @@ pub struct AdvancedRenderer<D> where D: Device {
 }
 
 impl<D> AdvancedRenderer<D> where D: Device {
-    pub fn new(device: &D, manager: VirtualTextureManager2D, resource_loader: &dyn ResourceLoader)
+    pub fn new(device: &D, manager: VirtualTextureManager, resource_loader: &dyn ResourceLoader)
                -> AdvancedRenderer<D> {
         let cache_texture = device.create_texture(TextureFormat::RGBA8,
                                                   manager.texture.cache_texture_size());
@@ -60,12 +60,12 @@ impl<D> AdvancedRenderer<D> where D: Device {
     }
 
     #[inline]
-    pub fn manager(&self) -> &VirtualTextureManager2D {
+    pub fn manager(&self) -> &VirtualTextureManager {
         &self.manager
     }
 
     #[inline]
-    pub fn manager_mut(&mut self) -> &mut VirtualTextureManager2D {
+    pub fn manager_mut(&mut self) -> &mut VirtualTextureManager {
         &mut self.manager
     }
 

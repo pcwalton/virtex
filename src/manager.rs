@@ -1,4 +1,4 @@
-// virtex/src/manager2d.rs
+// virtex/src/manager.rs
 
 use crate::{RequestResult, TileAddress, TileDescriptor, VirtualTexture};
 
@@ -8,7 +8,7 @@ use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use std::f32;
 
-pub struct VirtualTextureManager2D {
+pub struct VirtualTextureManager {
     pub texture: VirtualTexture,
     pub transform: Transform2F,
     viewport_size: Vector2I,
@@ -20,10 +20,10 @@ pub struct TileRequest {
     pub address: TileAddress,
 }
 
-impl VirtualTextureManager2D {
+impl VirtualTextureManager {
     #[inline]
-    pub fn new(texture: VirtualTexture, viewport_size: Vector2I) -> VirtualTextureManager2D {
-        VirtualTextureManager2D {
+    pub fn new(texture: VirtualTexture, viewport_size: Vector2I) -> VirtualTextureManager {
+        VirtualTextureManager {
             texture,
             viewport_size,
             transform: Transform2F::default(),

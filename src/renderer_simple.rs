@@ -1,6 +1,6 @@
 // virtex/src/renderer_simple.rs
 
-use crate::manager2d::VirtualTextureManager2D;
+use crate::manager::VirtualTextureManager;
 
 use pathfinder_content::color::ColorF;
 use pathfinder_geometry::rect::{RectF, RectI};
@@ -15,13 +15,13 @@ static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
 static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
 
 pub struct SimpleRenderer<D> where D: Device {
-    manager: VirtualTextureManager2D,
+    manager: VirtualTextureManager,
     render_vertex_array: RenderSimpleVertexArray<D>,
     cache_texture: D::Texture,
 }
 
 impl<D> SimpleRenderer<D> where D: Device {
-    pub fn new(device: &D, manager: VirtualTextureManager2D, resource_loader: &dyn ResourceLoader)
+    pub fn new(device: &D, manager: VirtualTextureManager, resource_loader: &dyn ResourceLoader)
                -> SimpleRenderer<D> {
         let cache_texture = device.create_texture(TextureFormat::RGBA8,
                                                   manager.texture.cache_texture_size());
@@ -122,12 +122,12 @@ impl<D> SimpleRenderer<D> where D: Device {
     }
 
     #[inline]
-    pub fn manager(&self) -> &VirtualTextureManager2D {
+    pub fn manager(&self) -> &VirtualTextureManager {
         &self.manager
     }
 
     #[inline]
-    pub fn manager_mut(&mut self) -> &mut VirtualTextureManager2D {
+    pub fn manager_mut(&mut self) -> &mut VirtualTextureManager {
         &mut self.manager
     }
 

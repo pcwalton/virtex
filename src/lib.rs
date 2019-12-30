@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::fmt::{self, Debug, Formatter};
 use std::mem;
 
-pub mod manager2d;
+pub mod manager;
 pub mod renderer_advanced;
 pub mod renderer_simple;
 
