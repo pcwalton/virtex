@@ -6,8 +6,10 @@ edition = "2018"
 
 [dependencies]
 arrayvec = "0.5"
+crossbeam-channel = "0.4"
 log = "0.4"
 rand = "0.7"
+raqote = "0.6"
 
 [dependencies.pathfinder_content]
 path = "../pathfinder/content"
@@ -21,19 +23,16 @@ path = "../pathfinder/gpu"
 [dependencies.pathfinder_simd]
 path = "../pathfinder/simd"
 
+[dependencies.resvg]
+version = "0.8"
+features = ["raqote-backend"]
+
 [dev-dependencies]
 env_logger = "0.7"
 gl = "0.6"
 
 [dev-dependencies.pathfinder_gl]
 path = "../pathfinder/gl"
-
-[dev-dependencies.raqote]
-version = "0.6"
-
-[dev-dependencies.resvg]
-version = "0.8"
-features = ["raqote-backend"]
 
 [dev-dependencies.surfman]
 path = "../surfman/surfman"

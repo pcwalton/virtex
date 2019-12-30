@@ -12,6 +12,7 @@ use std::mem;
 pub mod manager;
 pub mod renderer_advanced;
 pub mod renderer_simple;
+pub mod svg;
 
 // 0123456789abcdef0123456789abcdef
 // yyyyyyyyyyyyyxxxxxxxxxxxxxLlllll
