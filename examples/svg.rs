@@ -30,6 +30,7 @@ const CACHE_TILES_ACROSS: u32 = 16;
 const CACHE_TILES_DOWN: u32 = 16;
 const TILE_SIZE: u32 = 256;
 const TILE_BACKING_SIZE: u32 = 258;
+const TILE_HASH_INITIAL_BUCKET_SIZE: u32 = 64;
 const TILE_CACHE_WIDTH: u32 = CACHE_TILES_ACROSS * TILE_BACKING_SIZE;
 const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_BACKING_SIZE;
 const DEFAULT_GLOBAL_SCALE_FACTOR: f32 = 5.0;
@@ -106,7 +107,12 @@ fn main() {
 
     // Initialize the virtual texture.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
-    let virtual_texture = VirtualTexture::new(svg_size, cache_texture_size, TILE_SIZE);
+    let virtual_texture = VirtualTexture::new(svg_size,
+                                              cache_texture_size,
+                                              TILE_SIZE,
+                                              TILE_HASH_INITIAL_BUCKET_SIZE);
+
+    // Initialize the virtual texture manger and renderer.
     let manager = VirtualTextureManager2D::new(virtual_texture, physical_window_size);
     let mut renderer = AdvancedRenderer::new(&device, manager, &resources);
 

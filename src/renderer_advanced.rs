@@ -33,7 +33,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
                -> AdvancedRenderer<D> {
         let cache_texture = device.create_texture(TextureFormat::RGBA8,
                                                   manager.texture.cache_texture_size());
-        let metadata_texture_size = Vector2I::new(manager.texture.table_size() as i32, 4);
+
+        let metadata_texture_size = Vector2I::new(manager.texture.bucket_size() as i32, 4);
         let metadata_texture = device.create_texture(TextureFormat::RGBA32F,
                                                      metadata_texture_size);
 
@@ -143,8 +144,16 @@ impl<D> AdvancedRenderer<D> where D: Device {
 
     pub fn render(&mut self, device: &D) {
         // Pack and upload new metadata.
-        let table_size = self.manager.texture.table_size();
-        let metadata_texture_size = Vector2I::new(table_size as i32, 4);
+
+        // Resize the metadata texture if necessary.
+        let bucket_size = self.manager.texture.bucket_size();
+        let metadata_texture_size = Vector2I::new(bucket_size as i32, 4);
+        if device.texture_size(&self.metadata_texture) != metadata_texture_size {
+            self.metadata_texture = device.create_texture(TextureFormat::RGBA32F,
+                                                          metadata_texture_size);
+        }
+
+        // Allocate new data for the metadata texture storage.
         let metadata_stride = metadata_texture_size.x() as usize * 4;
         let mut metadata = vec![0.0; metadata_stride * metadata_texture_size.y() as usize];
 
@@ -176,8 +185,9 @@ impl<D> AdvancedRenderer<D> where D: Device {
                                       .to_f32()
                                       .scale(tile_backing_size);
 
-                let tile_rect = RectF::new(tile_origin + Vector2F::splat(1.0),
-                                        Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
+                let tile_rect =
+                    RectF::new(tile_origin + Vector2F::splat(1.0),
+                               Vector2F::splat(tile_size)).scale_xy(cache_texture_scale);
 
                 let tile_position = tile_descriptor.tile_position();
 
@@ -234,7 +244,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
                 (&self.render_vertex_array.render_program.cache_seed_b_uniform,
                  UniformData::Int(self.manager.texture.cache.subtables[1].seed as i32)),
                 (&self.render_vertex_array.render_program.cache_size_uniform,
-                 UniformData::Int(table_size as i32)),
+                 UniformData::Int(bucket_size as i32)),
                 (&self.render_vertex_array.render_program.tile_size_uniform,
                  UniformData::Vec2(tile_size.0)),
                 (&self.render_vertex_array.render_program.lod_range_uniform,

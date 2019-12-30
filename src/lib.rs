@@ -3,15 +3,12 @@
 use pathfinder_geometry::vector::Vector2I;
 use rand::{self, Rng};
 use std::collections::VecDeque;
-use std::collections::hash_map::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::mem;
 
 pub mod manager2d;
 pub mod renderer_advanced;
 pub mod renderer_simple;
-
-pub const TILE_HASH_TABLE_BUCKET_SIZE: usize = 1024;
 
 // 0123456789abcdef0123456789abcdef
 // yyyyyyyyyyyyyxxxxxxxxxxxxxLlllll
@@ -52,10 +49,13 @@ pub enum RequestResult {
 }
 
 impl VirtualTexture {
-    pub fn new(virtual_texture_size: Vector2I, cache_texture_size: Vector2I, tile_size: u32)
+    pub fn new(virtual_texture_size: Vector2I,
+               cache_texture_size: Vector2I,
+               tile_size: u32,
+               initial_bucket_size: u32)
                -> VirtualTexture {
         let mut this = VirtualTexture {
-            cache: TileHashTable::new(),
+            cache: TileHashTable::new(initial_bucket_size),
             lru: VecDeque::new(),
             tiles: vec![],
             next_free_tile: TileAddress(0),
@@ -92,20 +92,61 @@ impl VirtualTexture {
             return RequestResult::CachePending(tile_address);
         }
 
-        let mut tile_address = self.next_free_tile;
-        if tile_address.0 < self.cache_size() {
-            self.next_free_tile.0 += 1;
-        } else {
-            match self.lru.pop_back() {
-                None => return RequestResult::CacheFull,
-                Some(address_to_evict) => tile_address = address_to_evict,
-            }
+        let tile_address = match self.get_next_free_tile() {
+            None => return RequestResult::CacheFull,
+            Some(tile_address) => tile_address,
+        };
+
+        {
+            let tile = &mut self.tiles[tile_address.0 as usize];
+            debug_assert!(tile.pending_descriptor.is_none());
+            tile.pending_descriptor = Some(tile_descriptor);
         }
 
-        self.tiles[tile_address.0 as usize].pending_descriptor = Some(tile_descriptor);
         self.cache.insert(tile_descriptor, tile_address);
         self.lru.push_front(tile_address);
         RequestResult::CacheMiss(tile_address)
+    }
+
+    fn get_next_free_tile(&mut self) -> Option<TileAddress> {
+        let mut tile_address = self.next_free_tile;
+        if tile_address.0 < self.cache_size() {
+            self.next_free_tile.0 += 1;
+            return Some(tile_address);
+        }
+
+        // This vector will only be used if an exceptionally large number of tiles are pending
+        // rasterization.
+        let mut pending_tile_addresses = vec![];
+
+        let ok;
+        loop {
+            let candidate_address = match self.lru.pop_back() {
+                None => {
+                    ok = false;
+                    break;
+                }
+                Some(address_to_evict) => address_to_evict,
+            };
+
+            if self.tiles[candidate_address.0 as usize].pending_descriptor.is_none() {
+                tile_address = candidate_address;
+                ok = true;
+                break;
+            }
+
+            pending_tile_addresses.push(candidate_address);
+        }
+
+        for pending_tile_address in pending_tile_addresses {
+            self.lru.push_back(pending_tile_address);
+        }
+
+        if ok {
+            Some(tile_address)
+        } else {
+            None
+        }
     }
 
     pub fn mark_as_rasterized(&mut self,
@@ -162,7 +203,7 @@ impl VirtualTexture {
     }
 
     #[inline]
-    pub(crate) fn table_size(&self) -> usize {
+    pub(crate) fn bucket_size(&self) -> usize {
         self.cache.subtables[0].buckets.len()
     }
 }
@@ -172,7 +213,7 @@ pub(crate) struct TileHashTable {
 }
 
 pub(crate) struct TileHashSubtable {
-    pub(crate) buckets: [TileHashEntry; TILE_HASH_TABLE_BUCKET_SIZE],
+    pub(crate) buckets: Vec<TileHashEntry>,
     pub(crate) seed: u32,
 }
 
@@ -186,14 +227,23 @@ pub(crate) struct TileHashEntry {
 enum TileHashInsertResult {
     Inserted,
     Replaced,
+}
+
+#[derive(Clone, Copy)]
+enum TileHashSubinsertResult {
+    Inserted,
+    Replaced,
     Ejected(TileHashEntry),
 }
 
 impl TileHashTable {
-    fn new() -> TileHashTable {
+    fn new(initial_bucket_size: u32) -> TileHashTable {
         let mut rng = rand::thread_rng();
         TileHashTable {
-            subtables: [TileHashSubtable::new(rng.gen()), TileHashSubtable::new(rng.gen())],
+            subtables: [
+                TileHashSubtable::new(rng.gen(), initial_bucket_size),
+                TileHashSubtable::new(rng.gen(), initial_bucket_size),
+            ],
         }
     }
 
@@ -208,13 +258,16 @@ impl TileHashTable {
 
     fn insert(&mut self, descriptor: TileDescriptor, address: TileAddress)
               -> TileHashInsertResult {
+        let bucket_size = self.subtables[0].buckets.len() as u32;
+        let max_chain = 31 - bucket_size.leading_zeros();
+
         let mut entry = TileHashEntry { descriptor, address };
-        for _ in 0..50 {
+        for _ in 0..max_chain {
             for subtable in &mut self.subtables {
                 match subtable.insert(entry.descriptor, entry.address) {
-                    TileHashInsertResult::Inserted => return TileHashInsertResult::Inserted,
-                    TileHashInsertResult::Replaced => return TileHashInsertResult::Replaced,
-                    TileHashInsertResult::Ejected(old_entry) => {
+                    TileHashSubinsertResult::Inserted => return TileHashInsertResult::Inserted,
+                    TileHashSubinsertResult::Replaced => return TileHashInsertResult::Replaced,
+                    TileHashSubinsertResult::Ejected(old_entry) => {
                         println!("ejected! old_entry={:?}", old_entry);
                         entry = old_entry
                     }
@@ -222,8 +275,11 @@ impl TileHashTable {
             }
         }
 
-        // FIXME(pcwalton): Give up and rehash!
-        unimplemented!("Cuckoo hash reseeding")
+        // Give up and rehash.
+        //
+        // FIXME(pcwalton): If the load factor is less than 50%, don't increase the bucket size.
+        self.rebuild(bucket_size * 2);
+        self.insert(descriptor, address)
     }
 
     fn remove(&mut self, descriptor: TileDescriptor) -> Option<TileAddress> {
@@ -234,18 +290,28 @@ impl TileHashTable {
         }
         None
     }
+
+    fn rebuild(&mut self, new_bucket_size: u32) {
+        println!("*** REBUILDING {} ***", new_bucket_size);
+        let old_table = mem::replace(self, TileHashTable::new(new_bucket_size));
+        for old_subtable in &old_table.subtables {
+            for old_bucket in &old_subtable.buckets {
+                self.insert(old_bucket.descriptor, old_bucket.address);
+            }
+        }
+    }
 }
 
 impl TileHashSubtable {
-    fn new(seed: u32) -> TileHashSubtable {
+    fn new(seed: u32, bucket_size: u32) -> TileHashSubtable {
         TileHashSubtable {
-            buckets: [TileHashEntry::default(); TILE_HASH_TABLE_BUCKET_SIZE],
+            buckets: vec![TileHashEntry::default(); bucket_size as usize],
             seed,
         }
     }
 
     fn get(&self, descriptor: TileDescriptor) -> Option<TileAddress> {
-        let bucket_index = descriptor.hash(self.seed) as usize % TILE_HASH_TABLE_BUCKET_SIZE;
+        let bucket_index = descriptor.hash(self.seed) as usize % self.buckets.len();
         //println!("get(): descriptor = {:?}, bucket index = {:?}", descriptor, bucket_index);
         let bucket = &self.buckets[bucket_index];
         if !bucket.is_empty() && bucket.descriptor == descriptor {
@@ -256,25 +322,25 @@ impl TileHashSubtable {
     }
 
     fn insert(&mut self, descriptor: TileDescriptor, address: TileAddress)
-              -> TileHashInsertResult {
-        let bucket_index = descriptor.hash(self.seed) as usize % TILE_HASH_TABLE_BUCKET_SIZE;
+              -> TileHashSubinsertResult {
+        let bucket_index = descriptor.hash(self.seed) as usize % self.buckets.len();
         //println!("insert(): descriptor = {:?}, bucket index = {:?}", descriptor, bucket_index);
         let mut bucket = &mut self.buckets[bucket_index];
         if bucket.is_empty() {
             *bucket = TileHashEntry { descriptor, address };
-            TileHashInsertResult::Inserted
+            TileHashSubinsertResult::Inserted
         } else if bucket.descriptor == descriptor {
             bucket.address = address;
-            TileHashInsertResult::Replaced
+            TileHashSubinsertResult::Replaced
         } else {
             let new_entry = TileHashEntry { descriptor, address };
-            TileHashInsertResult::Ejected(mem::replace(bucket, new_entry))
+            TileHashSubinsertResult::Ejected(mem::replace(bucket, new_entry))
         }
     }
 
     fn remove(&mut self, descriptor: TileDescriptor) -> Option<TileAddress> {
-        let bucket_index = descriptor.hash(self.seed) as usize % TILE_HASH_TABLE_BUCKET_SIZE;
-        let mut bucket = &mut self.buckets[bucket_index];
+        let bucket_index = descriptor.hash(self.seed) as usize % self.buckets.len();
+        let bucket = &mut self.buckets[bucket_index];
         if !bucket.is_empty() && bucket.descriptor == descriptor {
             let old_address = bucket.address;
             *bucket = TileHashEntry::default();
