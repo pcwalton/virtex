@@ -16,6 +16,7 @@ use resvg::backend_raqote;
 use resvg::usvg::{Options as UsvgOptions, Tree};
 use std::env;
 use std::f32;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
@@ -269,37 +270,45 @@ fn rasterizer_thread(sender: Sender<RasterizerToMainMsg>,
 
     while let Ok(msg) = receiver.recv() {
         debug!("rendering {:?}, tile_size={}", msg.tile_request, TILE_SIZE);
-        let descriptor = &msg.tile_request.descriptor;
-        let scene_offset = descriptor.tile_position().to_f32().scale(-(TILE_SIZE as f32));
-        let scale = f32::powf(2.0, descriptor.lod() as f32) /* * global_scale_factor */;
-
-        let mut transform = Transform2F::default();
-        transform = Transform2F::from_uniform_scale(scale) * transform;
-        transform = Transform2F::from_translation(scene_offset) * transform;
-        transform = Transform2F::from_translation(Vector2F::splat(1.0)) * transform;
-
-        cache_draw_target.set_transform(&Transform::row_major(transform.matrix.m11(),
-                                                              transform.matrix.m21(),
-                                                              transform.matrix.m12(),
-                                                              transform.matrix.m22(),
-                                                              transform.vector.x(),
-                                                              transform.vector.y()));
-        cache_draw_target.clear(BACKGROUND_COLOR);
-        backend_raqote::render_to_canvas(&svg_tree,
-                                         &ResvgOptions::default(),
-                                         svg_screen_size,
-                                         &mut cache_draw_target);
-        cache_draw_target.set_transform(&Transform::identity());
-
         let mut cache_pixels =
             vec![0; TILE_BACKING_SIZE as usize * TILE_BACKING_SIZE as usize * 4];
 
-        blit(&mut cache_pixels,
-             TILE_BACKING_SIZE as usize * 4,
-             RectI::new(Vector2I::default(), Vector2I::splat(TILE_BACKING_SIZE as i32)),
-             cache_draw_target.get_data(),
-             TILE_BACKING_SIZE as usize,
-             Vector2I::default());
+        if let Err(_) = panic::catch_unwind(AssertUnwindSafe(|| {
+            let descriptor = &msg.tile_request.descriptor;
+            let scene_offset = descriptor.tile_position().to_f32().scale(-(TILE_SIZE as f32));
+            let scale = f32::exp2(descriptor.lod() as f32);
+
+            let mut transform = Transform2F::default();
+            transform = Transform2F::from_uniform_scale(scale) * transform;
+            transform = Transform2F::from_translation(scene_offset) * transform;
+            transform = Transform2F::from_translation(Vector2F::splat(1.0)) * transform;
+
+            cache_draw_target.set_transform(&Transform::row_major(transform.matrix.m11(),
+                                                                transform.matrix.m21(),
+                                                                transform.matrix.m12(),
+                                                                transform.matrix.m22(),
+                                                                transform.vector.x(),
+                                                                transform.vector.y()));
+            cache_draw_target.clear(BACKGROUND_COLOR);
+
+            backend_raqote::render_to_canvas(&svg_tree,
+                                            &ResvgOptions::default(),
+                                            svg_screen_size,
+                                            &mut cache_draw_target);
+
+            cache_draw_target.set_transform(&Transform::identity());
+
+            blit(&mut cache_pixels,
+                 TILE_BACKING_SIZE as usize * 4,
+                 RectI::new(Vector2I::default(), Vector2I::splat(TILE_BACKING_SIZE as i32)),
+                 cache_draw_target.get_data(),
+                 TILE_BACKING_SIZE as usize,
+                 Vector2I::default());
+        })) {
+            error!("rendering {:?} panicked!", msg.tile_request);
+            cache_draw_target = DrawTarget::new(TILE_BACKING_SIZE as i32,
+                                                TILE_BACKING_SIZE as i32);
+        }
 
         sender.send(RasterizerToMainMsg::TileRasterized {
             tile_request: msg.tile_request,

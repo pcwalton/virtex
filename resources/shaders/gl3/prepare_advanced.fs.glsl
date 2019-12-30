@@ -19,7 +19,7 @@ float getMipLevel(vec2 texCoord) {
 
 void main() {
     float neededMipLevel = ceil(getMipLevel(vTexCoord * uViewportScaleFactor));
-    vec2 scaledTexCoord = vTexCoord * pow(2.0, neededMipLevel) / uTileSize;
+    vec2 scaledTexCoord = vTexCoord * exp2(neededMipLevel) / uTileSize;
     vec2 neededTileOrigin = floor(scaledTexCoord);
 
     cFragColor = vec4(neededTileOrigin, neededMipLevel, 1.0);
