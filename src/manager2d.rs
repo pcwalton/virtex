@@ -1,6 +1,6 @@
 // virtex/src/manager2d.rs
 
-use crate::{RequestResult, TileAddress, TileCacheEntry, TileDescriptor, VirtualTexture};
+use crate::{RequestResult, TileAddress, TileDescriptor, VirtualTexture};
 
 use arrayvec::ArrayVec;
 use pathfinder_geometry::transform2d::Transform2F;
