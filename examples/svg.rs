@@ -3,7 +3,6 @@
 #[macro_use]
 extern crate log;
 
-use crossbeam_channel;
 use env_logger;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use pathfinder_gl::{GLDevice, GLVersion};
@@ -11,13 +10,12 @@ use pathfinder_gpu::resources::FilesystemResourceLoader;
 use raqote::SolidSource;
 use std::env;
 use std::f32;
-use std::thread;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
 use virtex::VirtualTexture;
 use virtex::manager::VirtualTextureManager;
 use virtex::renderer_advanced::AdvancedRenderer;
-use virtex::svg::{self, RasterizerToMainMsg};
+use virtex::svg::SVGRasterizerProxy;
 use winit::dpi::LogicalSize;
 use winit::{DeviceEvent, Event, EventsLoop, KeyboardInput, ModifiersState, MouseScrollDelta};
 use winit::{VirtualKeyCode, WindowBuilder, WindowEvent};
@@ -84,24 +82,9 @@ fn main() {
     let device = GLDevice::new(GLVersion::GL3, default_framebuffer_object);
     let resources = FilesystemResourceLoader::locate();
 
-    // Initialize the raster thread.
-    let (mut main_to_rasterizer_sender,
-         main_to_rasterizer_receiver) = crossbeam_channel::unbounded();
-    let (rasterizer_to_main_sender,
-         mut rasterizer_to_main_receiver) = crossbeam_channel::unbounded();
-    let _raster_thread = thread::spawn(move || {
-        svg::rasterizer_thread(rasterizer_to_main_sender,
-                               main_to_rasterizer_receiver,
-                               svg_path,
-                               BACKGROUND_COLOR,
-                               TILE_SIZE);
-    });
-
-    // Wait for the SVG to be loaded.
-    let svg_size = match rasterizer_to_main_receiver.recv().unwrap() {
-        RasterizerToMainMsg::SVGLoaded { size } => size,
-        RasterizerToMainMsg::TileRasterized { .. } => unreachable!(),
-    };
+    // Initialize the raster thread, and wait for the SVG to load.
+    let mut rasterizer_proxy = SVGRasterizerProxy::new(svg_path, BACKGROUND_COLOR, TILE_SIZE);
+    let svg_size = rasterizer_proxy.wait_for_svg_to_load();
 
     // Initialize the virtual texture.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
@@ -120,11 +103,7 @@ fn main() {
     while !exit {
         debug!("--- begin frame ---");
         renderer.prepare(&device, &mut needed_tiles);
-        svg::rasterize_needed_tiles(&device,
-                                    &mut renderer,
-                                    &mut needed_tiles,
-                                    &mut main_to_rasterizer_sender,
-                                    &mut rasterizer_to_main_receiver);
+        rasterizer_proxy.rasterize_needed_tiles(&device, &mut renderer, &mut needed_tiles);
 
         renderer.render(&device);
 
