@@ -76,12 +76,15 @@ impl<D> AdvancedRenderer<D> where D: Device {
                 continue;
             }
 
-            let descriptor = TileDescriptor::new(Vector2I::new(pixel[0] as i32, pixel[1] as i32),
-                                                    pixel[2] as i8);
+            let tile_origin = Vector2I::new(pixel[0] as i32, pixel[1] as i32);
+            if tile_origin.x() < 0 || tile_origin.y() < 0 {
+                continue;
+            }
 
+            let descriptor = TileDescriptor::new(tile_origin, pixel[2] as i8);
             if let RequestResult::CacheMiss(address) = self.manager
-                                                            .texture
-                                                            .request_tile(descriptor) {
+                                                           .texture
+                                                           .request_tile(descriptor) {
                 debug!("cache miss: {:?}", descriptor);
                 needed_tiles.push(TileRequest { descriptor, address });
             }
@@ -167,7 +170,7 @@ impl<D> AdvancedRenderer<D> where D: Device {
                                             uniforms: &'b mut Vec<(&'a D::Uniform, UniformData)>,
                                             textures: &'c mut Vec<&'a D::Texture>) {
         let tile_size = Vector2F::splat(self.manager.texture.tile_size() as f32);
-        debug!("lod range=[{}, {}] tile_size={:?}", self.min_lod, self.max_lod, tile_size);
+        trace!("lod range=[{}, {}] tile_size={:?}", self.min_lod, self.max_lod, tile_size);
 
         uniforms.push((&render_uniforms.metadata_uniform,
                        UniformData::TextureUnit(textures.len() as u32)));
@@ -185,6 +188,14 @@ impl<D> AdvancedRenderer<D> where D: Device {
                        UniformData::Vec2(F32x2::splat(self.manager.texture.tile_size() as f32))));
         uniforms.push((&render_uniforms.lod_range_uniform,
                        UniformData::Vec2(F32x2::new(self.min_lod as f32, self.max_lod as f32))));
+    }
+
+    pub fn derivatives_viewport(&self) -> RectI {
+        let viewport_size = self.manager.viewport_size();
+        let derivatives_viewport_size =
+            Vector2I::new(viewport_size.x() / self.derivatives_viewport_scale_factor,
+                          viewport_size.y() / self.derivatives_viewport_scale_factor);
+        RectI::new(Vector2I::default(), derivatives_viewport_size)
     }
 }
 

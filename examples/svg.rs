@@ -98,6 +98,7 @@ fn main() {
     let svg_size = rasterizer_proxy.wait_for_svg_to_load();
 
     // Initialize the virtual texture.
+    // FIXME(pcwalton): Bad API. This should take the *number* of tiles across and down.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
     let virtual_texture = VirtualTexture::new(cache_texture_size,
                                               TILE_SIZE,
@@ -108,12 +109,8 @@ fn main() {
     let mut renderer = AdvancedRenderer::new(&device, manager, DERIVATIVES_VIEWPORT_SCALE_FACTOR);
 
     // Create the derivatives texture.
-    let derivatives_texture_size =
-        physical_window_size.to_f32()
-                            .scale(1.0 / DERIVATIVES_VIEWPORT_SCALE_FACTOR as f32)
-                            .to_i32();
     let derivatives_texture = device.create_texture(TextureFormat::RGBA32F,
-                                                    derivatives_texture_size);
+                                                    renderer.derivatives_viewport().size());
     let derivatives_framebuffer = device.create_framebuffer(derivatives_texture);
 
     // Initialize shaders and vertex arrays.
@@ -133,7 +130,6 @@ fn main() {
                 &mut needed_tiles);
 
         rasterizer_proxy.rasterize_needed_tiles(&device, &mut renderer, &mut needed_tiles);
-
         renderer.update_metadata(&device);
         render(&renderer, &device, &render_vertex_array, svg_size);
 
@@ -191,17 +187,10 @@ fn prepare(renderer: &mut AdvancedRenderer<GLDevice>,
            virtual_texture_size: Vector2I,
            needed_tiles: &mut Vec<TileRequest>) {
     let quad_rect = RectI::new(Vector2I::default(), virtual_texture_size).to_f32();
-
-    let viewport_size = renderer.manager().viewport_size();
-    let derivatives_viewport_size =
-        Vector2I::new(viewport_size.x() / DERIVATIVES_VIEWPORT_SCALE_FACTOR,
-                        viewport_size.y() / DERIVATIVES_VIEWPORT_SCALE_FACTOR);
-    let derivatives_viewport = RectI::new(Vector2I::default(), derivatives_viewport_size);
-
     let mut uniforms = vec![
         (&prepare_vertex_array.prepare_program.quad_rect_uniform, UniformData::Vec4(quad_rect.0)),
         (&prepare_vertex_array.prepare_program.framebuffer_size_uniform,
-            UniformData::Vec2(viewport_size.to_f32().0)),
+            UniformData::Vec2(renderer.manager().viewport_size().to_f32().0)),
         (&prepare_vertex_array.prepare_program.transform_uniform,
             UniformData::Mat2(renderer.manager().transform.matrix.0)),
         (&prepare_vertex_array.prepare_program.translation_uniform,
@@ -218,7 +207,7 @@ fn prepare(renderer: &mut AdvancedRenderer<GLDevice>,
         primitive: Primitive::Triangles,
         uniforms: &uniforms,
         textures: &[],
-        viewport: derivatives_viewport,
+        viewport: renderer.derivatives_viewport(),
         options: RenderOptions {
             clear_ops: ClearOps {
                 color: Some(ColorF::new(0.0, 0.0, 0.0, 0.0)),
@@ -228,7 +217,7 @@ fn prepare(renderer: &mut AdvancedRenderer<GLDevice>,
         },
     });
     let texture_data = device.read_pixels(&RenderTarget::Framebuffer(derivatives_framebuffer),
-                                          derivatives_viewport);
+                                          renderer.derivatives_viewport());
     device.end_commands();
 
     renderer.request_needed_tiles(&texture_data, needed_tiles);
