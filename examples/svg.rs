@@ -4,17 +4,23 @@
 extern crate log;
 
 use env_logger;
+use pathfinder_content::color::ColorF;
+use pathfinder_geometry::rect::RectI;
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
-use pathfinder_gl::{GLDevice, GLVersion};
-use pathfinder_gpu::resources::FilesystemResourceLoader;
+use pathfinder_gl::{GLBuffer, GLDevice, GLFramebuffer, GLProgram, GLUniform, GLVersion};
+use pathfinder_gl::{GLVertexArray, GLVertexAttr};
+use pathfinder_gpu::resources::{FilesystemResourceLoader, ResourceLoader};
+use pathfinder_gpu::{BufferData, BufferTarget, BufferUploadMode, ClearOps, Device, Primitive};
+use pathfinder_gpu::{RenderOptions, RenderState, RenderTarget, TextureFormat, UniformData};
+use pathfinder_gpu::{VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
 use raqote::SolidSource;
 use std::env;
 use std::f32;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
 use virtex::VirtualTexture;
-use virtex::manager::VirtualTextureManager;
-use virtex::renderer_advanced::AdvancedRenderer;
+use virtex::manager::{TileRequest, VirtualTextureManager};
+use virtex::renderer_advanced::{AdvancedRenderer, PrepareAdvancedUniforms, RenderAdvancedUniforms};
 use virtex::svg::SVGRasterizerProxy;
 use winit::dpi::LogicalSize;
 use winit::{DeviceEvent, Event, EventsLoop, KeyboardInput, ModifiersState, MouseScrollDelta};
@@ -31,9 +37,14 @@ const TILE_HASH_INITIAL_BUCKET_SIZE: u32 = 64;
 const TILE_CACHE_WIDTH: u32 = CACHE_TILES_ACROSS * TILE_BACKING_SIZE;
 const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_BACKING_SIZE;
 
+const DERIVATIVES_VIEWPORT_SCALE_FACTOR: i32 = 16;
+
 static BACKGROUND_COLOR: SolidSource = SolidSource { r: 255, g: 255, b: 255, a: 255 };
 
 static DEFAULT_SVG_PATH: &'static str = "resources/svg/Ghostscript_Tiger.svg";
+
+static QUAD_VERTEX_POSITIONS: [u8; 8] = [0, 0, 1, 0, 0, 1, 1, 1];
+static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
 
 fn main() {
     env_logger::init();
@@ -88,24 +99,43 @@ fn main() {
 
     // Initialize the virtual texture.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
-    let virtual_texture = VirtualTexture::new(svg_size,
-                                              cache_texture_size,
+    let virtual_texture = VirtualTexture::new(cache_texture_size,
                                               TILE_SIZE,
                                               TILE_HASH_INITIAL_BUCKET_SIZE);
 
     // Initialize the virtual texture manger and renderer.
     let manager = VirtualTextureManager::new(virtual_texture, physical_window_size);
-    let mut renderer = AdvancedRenderer::new(&device, manager, &resources);
+    let mut renderer = AdvancedRenderer::new(&device, manager, DERIVATIVES_VIEWPORT_SCALE_FACTOR);
+
+    // Create the derivatives texture.
+    let derivatives_texture_size =
+        physical_window_size.to_f32()
+                            .scale(1.0 / DERIVATIVES_VIEWPORT_SCALE_FACTOR as f32)
+                            .to_i32();
+    let derivatives_texture = device.create_texture(TextureFormat::RGBA32F,
+                                                    derivatives_texture_size);
+    let derivatives_framebuffer = device.create_framebuffer(derivatives_texture);
+
+    // Initialize shaders and vertex arrays.
+    let prepare_vertex_array = PrepareAdvancedVertexArray::new(&device, &resources);
+    let render_vertex_array = RenderAdvancedVertexArray::new(&device, &resources);
 
     let mut exit = false;
     let mut needed_tiles = vec![];
 
     while !exit {
         debug!("--- begin frame ---");
-        renderer.prepare(&device, &mut needed_tiles);
+        prepare(&mut renderer,
+                &device,
+                &prepare_vertex_array,
+                &derivatives_framebuffer,
+                svg_size,
+                &mut needed_tiles);
+
         rasterizer_proxy.rasterize_needed_tiles(&device, &mut renderer, &mut needed_tiles);
 
-        renderer.render(&device);
+        renderer.update_metadata(&device);
+        render(&renderer, &device, &render_vertex_array, svg_size);
 
         let mut surface = surfman_device.unbind_surface_from_context(&mut context)
                                         .unwrap()
@@ -151,5 +181,250 @@ fn main() {
                 _ => {}
             }
         });
+    }
+}
+
+fn prepare(renderer: &mut AdvancedRenderer<GLDevice>,
+           device: &GLDevice,
+           prepare_vertex_array: &PrepareAdvancedVertexArray,
+           derivatives_framebuffer: &GLFramebuffer,
+           virtual_texture_size: Vector2I,
+           needed_tiles: &mut Vec<TileRequest>) {
+    let quad_rect = RectI::new(Vector2I::default(), virtual_texture_size).to_f32();
+
+    let viewport_size = renderer.manager().viewport_size();
+    let derivatives_viewport_size =
+        Vector2I::new(viewport_size.x() / DERIVATIVES_VIEWPORT_SCALE_FACTOR,
+                        viewport_size.y() / DERIVATIVES_VIEWPORT_SCALE_FACTOR);
+    let derivatives_viewport = RectI::new(Vector2I::default(), derivatives_viewport_size);
+
+    let mut uniforms = vec![
+        (&prepare_vertex_array.prepare_program.quad_rect_uniform, UniformData::Vec4(quad_rect.0)),
+        (&prepare_vertex_array.prepare_program.framebuffer_size_uniform,
+            UniformData::Vec2(viewport_size.to_f32().0)),
+        (&prepare_vertex_array.prepare_program.transform_uniform,
+            UniformData::Mat2(renderer.manager().transform.matrix.0)),
+        (&prepare_vertex_array.prepare_program.translation_uniform,
+            UniformData::Vec2(renderer.manager().transform.vector.0)),
+    ];
+    renderer.push_prepare_uniforms(&prepare_vertex_array.prepare_program.virtex_uniforms,
+                                   &mut uniforms);
+
+    device.begin_commands();
+    device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {
+        target: &RenderTarget::Framebuffer(derivatives_framebuffer),
+        program: &prepare_vertex_array.prepare_program.program,
+        vertex_array: &prepare_vertex_array.vertex_array,
+        primitive: Primitive::Triangles,
+        uniforms: &uniforms,
+        textures: &[],
+        viewport: derivatives_viewport,
+        options: RenderOptions {
+            clear_ops: ClearOps {
+                color: Some(ColorF::new(0.0, 0.0, 0.0, 0.0)),
+                ..ClearOps::default()
+            },
+            ..RenderOptions::default()
+        },
+    });
+    let texture_data = device.read_pixels(&RenderTarget::Framebuffer(derivatives_framebuffer),
+                                          derivatives_viewport);
+    device.end_commands();
+
+    renderer.request_needed_tiles(&texture_data, needed_tiles);
+}
+
+fn render(renderer: &AdvancedRenderer<GLDevice>,
+          device: &GLDevice,
+          render_vertex_array: &RenderAdvancedVertexArray,
+          virtual_texture_size: Vector2I) {
+    let quad_rect = RectI::new(Vector2I::default(), virtual_texture_size).to_f32();
+    let mut uniforms = vec![
+        (&render_vertex_array.render_program.quad_rect_uniform,
+            UniformData::Vec4(quad_rect.0)),
+        (&render_vertex_array.render_program.framebuffer_size_uniform,
+            UniformData::Vec2(renderer.manager().viewport_size().to_f32().0)),
+        (&render_vertex_array.render_program.transform_uniform,
+            UniformData::Mat2(renderer.manager().transform.matrix.0)),
+        (&render_vertex_array.render_program.translation_uniform,
+            UniformData::Vec2(renderer.manager().transform.vector.0)),
+    ];
+    let mut textures = vec![];
+    renderer.push_render_uniforms(&render_vertex_array.render_program.virtex_uniforms,
+                                  &mut uniforms,
+                                  &mut textures);
+
+    device.begin_commands();
+    device.draw_elements(QUAD_VERTEX_INDICES.len() as u32, &RenderState {
+        target: &RenderTarget::Default,
+        program: &render_vertex_array.render_program.program,
+        vertex_array: &render_vertex_array.vertex_array,
+        primitive: Primitive::Triangles,
+        uniforms: &uniforms,
+        textures: &textures,
+        viewport: RectI::new(Vector2I::splat(0), renderer.manager().viewport_size()),
+        options: RenderOptions {
+            clear_ops: ClearOps {
+                color: Some(ColorF::new(0.0, 0.0, 0.0, 1.0)),
+                ..ClearOps::default()
+            },
+            ..RenderOptions::default()
+        },
+    });
+    device.end_commands();
+}
+
+struct PrepareAdvancedVertexArray {
+    prepare_program: PrepareAdvancedProgram,
+    vertex_array: GLVertexArray,
+    #[allow(dead_code)]
+    quad_vertex_positions_buffer: GLBuffer,
+    #[allow(dead_code)]
+    quad_vertex_indices_buffer: GLBuffer,
+}
+
+impl PrepareAdvancedVertexArray {
+    fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> PrepareAdvancedVertexArray {
+        let prepare_program = PrepareAdvancedProgram::new(device, resources);
+        let vertex_array = device.create_vertex_array();
+        let quad_vertex_positions_buffer = device.create_buffer();
+        device.allocate_buffer(&quad_vertex_positions_buffer,
+                               BufferData::Memory(&QUAD_VERTEX_POSITIONS),
+                               BufferTarget::Vertex,
+                               BufferUploadMode::Static);
+        let quad_vertex_indices_buffer = device.create_buffer();
+        device.allocate_buffer(&quad_vertex_indices_buffer,
+                               BufferData::Memory(&QUAD_VERTEX_INDICES),
+                               BufferTarget::Index,
+                               BufferUploadMode::Static);
+        device.bind_buffer(&vertex_array, &quad_vertex_positions_buffer, BufferTarget::Vertex);
+        device.bind_buffer(&vertex_array, &quad_vertex_indices_buffer, BufferTarget::Index);
+        device.configure_vertex_attr(&vertex_array,
+                                     &prepare_program.position_attribute,
+                                     &VertexAttrDescriptor {
+                                         size: 2,
+                                         class: VertexAttrClass::Float,
+                                         attr_type: VertexAttrType::U8,
+                                         stride: 2,
+                                         offset: 0,
+                                         divisor: 0,
+                                         buffer_index: 0,
+                                     });
+        PrepareAdvancedVertexArray {
+            prepare_program,
+            vertex_array,
+            quad_vertex_positions_buffer,
+            quad_vertex_indices_buffer,
+        }
+    }
+}
+
+struct PrepareAdvancedProgram {
+    program: GLProgram,
+    position_attribute: GLVertexAttr,
+    quad_rect_uniform: GLUniform,
+    framebuffer_size_uniform: GLUniform,
+    transform_uniform: GLUniform,
+    translation_uniform: GLUniform,
+    virtex_uniforms: PrepareAdvancedUniforms<GLDevice>,
+}
+
+impl PrepareAdvancedProgram {
+    fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> PrepareAdvancedProgram {
+        let program = device.create_program_from_shader_names(resources,
+                                                              "prepare_advanced",
+                                                              "render_advanced",
+                                                              "prepare_advanced");
+        let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
+        let quad_rect_uniform = device.get_uniform(&program, "QuadRect");
+        let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
+        let transform_uniform = device.get_uniform(&program, "Transform");
+        let translation_uniform = device.get_uniform(&program, "Translation");
+        let virtex_uniforms = PrepareAdvancedUniforms::new(device, &program);
+        PrepareAdvancedProgram {
+            program,
+            position_attribute,
+            quad_rect_uniform,
+            framebuffer_size_uniform,
+            transform_uniform,
+            translation_uniform,
+            virtex_uniforms,
+        }
+    }
+}
+
+struct RenderAdvancedVertexArray {
+    render_program: RenderAdvancedProgram,
+    vertex_array: GLVertexArray,
+    #[allow(dead_code)]
+    quad_vertex_positions_buffer: GLBuffer,
+    #[allow(dead_code)]
+    quad_vertex_indices_buffer: GLBuffer,
+}
+
+impl RenderAdvancedVertexArray {
+    fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> RenderAdvancedVertexArray {
+        let render_program = RenderAdvancedProgram::new(device, resources);
+        let vertex_array = device.create_vertex_array();
+        let quad_vertex_positions_buffer = device.create_buffer();
+        device.allocate_buffer(&quad_vertex_positions_buffer,
+                               BufferData::Memory(&QUAD_VERTEX_POSITIONS),
+                               BufferTarget::Vertex,
+                               BufferUploadMode::Static);
+        let quad_vertex_indices_buffer = device.create_buffer();
+        device.allocate_buffer(&quad_vertex_indices_buffer,
+                               BufferData::Memory(&QUAD_VERTEX_INDICES),
+                               BufferTarget::Index,
+                               BufferUploadMode::Static);
+        device.bind_buffer(&vertex_array, &quad_vertex_positions_buffer, BufferTarget::Vertex);
+        device.bind_buffer(&vertex_array, &quad_vertex_indices_buffer, BufferTarget::Index);
+        device.configure_vertex_attr(&vertex_array,
+                                     &render_program.position_attribute,
+                                     &VertexAttrDescriptor {
+                                         size: 2,
+                                         class: VertexAttrClass::Float,
+                                         attr_type: VertexAttrType::U8,
+                                         stride: 2,
+                                         offset: 0,
+                                         divisor: 0,
+                                         buffer_index: 0,
+                                     });
+        RenderAdvancedVertexArray {
+            render_program,
+            vertex_array,
+            quad_vertex_positions_buffer,
+            quad_vertex_indices_buffer,
+        }
+    }
+}
+
+struct RenderAdvancedProgram {
+    program: GLProgram,
+    position_attribute: GLVertexAttr,
+    quad_rect_uniform: GLUniform,
+    framebuffer_size_uniform: GLUniform,
+    transform_uniform: GLUniform,
+    translation_uniform: GLUniform,
+    virtex_uniforms: RenderAdvancedUniforms<GLDevice>,
+}
+
+impl RenderAdvancedProgram {
+    fn new(device: &GLDevice, resources: &dyn ResourceLoader) -> RenderAdvancedProgram {
+        let program = device.create_program(resources, "render_advanced");
+        let position_attribute = device.get_vertex_attr(&program, "Position").unwrap();
+        let quad_rect_uniform = device.get_uniform(&program, "QuadRect");
+        let framebuffer_size_uniform = device.get_uniform(&program, "FramebufferSize");
+        let transform_uniform = device.get_uniform(&program, "Transform");
+        let translation_uniform = device.get_uniform(&program, "Translation");
+        let virtex_uniforms = RenderAdvancedUniforms::new(device, &program);
+        RenderAdvancedProgram {
+            program,
+            position_attribute,
+            quad_rect_uniform,
+            framebuffer_size_uniform,
+            transform_uniform,
+            translation_uniform,
+            virtex_uniforms,
+        }
     }
 }

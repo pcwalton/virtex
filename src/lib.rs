@@ -39,8 +39,6 @@ pub struct VirtualTexture {
     lru: VecDeque<TileAddress>,
     tiles: Vec<TileCacheEntry>,
     next_free_tile: TileAddress,
-    #[allow(dead_code)]
-    virtual_texture_size: Vector2I,
     cache_texture_size: Vector2I,
     tile_size: u32,
 }
@@ -53,17 +51,13 @@ pub enum RequestResult {
 }
 
 impl VirtualTexture {
-    pub fn new(virtual_texture_size: Vector2I,
-               cache_texture_size: Vector2I,
-               tile_size: u32,
-               initial_bucket_size: u32)
+    pub fn new(cache_texture_size: Vector2I, tile_size: u32, initial_bucket_size: u32)
                -> VirtualTexture {
         let mut this = VirtualTexture {
             cache: TileHashTable::new(initial_bucket_size),
             lru: VecDeque::new(),
             tiles: vec![],
             next_free_tile: TileAddress(0),
-            virtual_texture_size,
             cache_texture_size,
             tile_size,
         };

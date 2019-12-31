@@ -22,7 +22,7 @@ pub struct SVGRasterizerProxy {
     thread: JoinHandle<()>,
 }
 
-pub struct SVGRasterizerThread {
+struct SVGRasterizerThread {
     rasterizer_to_main_sender: Sender<RasterizerToMainMsg>,
     main_to_rasterizer_receiver: Receiver<MainToRasterizerMsg>,
     svg_path: String,
@@ -142,7 +142,7 @@ enum RasterizerToMainMsg {
 }
 
 impl SVGRasterizerThread {
-    pub fn run(&mut self) {
+    fn run(&mut self) {
         // Load the SVG.
         let svg_tree = Tree::from_file(&self.svg_path, &UsvgOptions::default()).unwrap();
 
