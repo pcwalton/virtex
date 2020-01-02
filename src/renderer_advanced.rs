@@ -1,7 +1,7 @@
 // virtex/src/renderer_advanced.rs
 
 use crate::manager::{TileRequest, VirtualTextureManager};
-use crate::{RequestResult, TileDescriptor};
+use crate::texture::{RequestResult, TileDescriptor};
 
 use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};

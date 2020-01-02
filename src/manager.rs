@@ -1,6 +1,6 @@
 // virtex/src/manager.rs
 
-use crate::{RequestResult, TileAddress, TileDescriptor, VirtualTexture};
+use crate::texture::{RequestResult, TileAddress, TileDescriptor, VirtualTexture};
 
 use arrayvec::ArrayVec;
 use pathfinder_geometry::transform2d::Transform2F;
@@ -64,7 +64,7 @@ impl VirtualTextureManager {
     fn request_needed_tiles_for_lod(&mut self, needed_tiles: &mut Vec<TileRequest>, lod: i8) {
         let viewport_rect = RectF::new(Vector2F::default(), self.viewport_size.to_f32());
         let transformed_viewport_rect = self.transform.inverse() * viewport_rect;
-        let tile_size_inv = f32::powf(2.0, lod as f32) / self.texture.tile_size as f32;
+        let tile_size_inv = f32::powf(2.0, lod as f32) / self.texture.tile_size() as f32;
         let tile_space_rect = transformed_viewport_rect.scale(tile_size_inv).round_out().to_i32();
         for y in tile_space_rect.min_y()..tile_space_rect.max_y() {
             for x in tile_space_rect.min_x()..tile_space_rect.max_x() {
