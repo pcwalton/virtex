@@ -2,6 +2,7 @@
 
 use crate::manager::TileRequest;
 use crate::renderer_advanced::AdvancedRenderer;
+use crate::stack::ConcurrentStack;
 
 use crossbeam_channel::{Receiver, Sender};
 use pathfinder_geometry::rect::RectI;
@@ -13,10 +14,11 @@ use resvg::backend_raqote;
 use resvg::usvg::{Options as UsvgOptions, Tree};
 use resvg::{Options as ResvgOptions, ScreenSize};
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 pub struct SVGRasterizerProxy {
-    main_to_rasterizer_sender: Sender<MainToRasterizerMsg>,
+    rasterization_stack: Arc<ConcurrentStack<TileRasterRequest>>,
     rasterizer_to_main_receiver: Receiver<RasterizerToMainMsg>,
     #[allow(dead_code)]
     thread: JoinHandle<()>,
@@ -24,7 +26,7 @@ pub struct SVGRasterizerProxy {
 
 struct SVGRasterizerThread {
     rasterizer_to_main_sender: Sender<RasterizerToMainMsg>,
-    main_to_rasterizer_receiver: Receiver<MainToRasterizerMsg>,
+    rasterization_stack: Arc<ConcurrentStack<TileRasterRequest>>,
     svg_path: String,
     background_color: SolidSource,
     tile_size: u32,
@@ -33,20 +35,20 @@ struct SVGRasterizerThread {
 impl SVGRasterizerProxy {
     pub fn new(svg_path: String, background_color: SolidSource, tile_size: u32)
                -> SVGRasterizerProxy {
-        let (main_to_rasterizer_sender,
-             main_to_rasterizer_receiver) = crossbeam_channel::unbounded();
         let (rasterizer_to_main_sender,
              rasterizer_to_main_receiver) = crossbeam_channel::unbounded();
+        let rasterization_stack = Arc::new(ConcurrentStack::new());
+        let rasterization_stack_for_thread = rasterization_stack.clone();
         let thread = thread::spawn(move || {
             SVGRasterizerThread {
+                rasterization_stack: rasterization_stack_for_thread,
                 rasterizer_to_main_sender,
-                main_to_rasterizer_receiver,
                 svg_path,
                 background_color,
                 tile_size,
             }.run()
         });
-        SVGRasterizerProxy { main_to_rasterizer_sender, rasterizer_to_main_receiver, thread }
+        SVGRasterizerProxy { rasterization_stack, rasterizer_to_main_receiver, thread }
     }
 
     /// Waits for the SVG to load and returns its size.
@@ -71,9 +73,10 @@ impl SVGRasterizerProxy {
                 let tile_origin = renderer.manager()
                                         .texture
                                         .address_to_tile_coords(tile_cache_entry.address);
-                self.main_to_rasterizer_sender
-                    .send(MainToRasterizerMsg { tile_request: tile_cache_entry, tile_origin })
-                    .unwrap();
+                self.rasterization_stack.push(TileRasterRequest {
+                    tile_request: tile_cache_entry,
+                    tile_origin,
+                });
             }
         }
 
@@ -125,7 +128,7 @@ fn blit(dest: &mut [u8],
     }
 }
 
-struct MainToRasterizerMsg {
+struct TileRasterRequest {
     tile_request: TileRequest,
     tile_origin: Vector2I,
 }
@@ -159,7 +162,8 @@ impl SVGRasterizerThread {
         let tile_backing_size = (self.tile_size + 2) as i32;
         let mut cache_draw_target = DrawTarget::new(tile_backing_size, tile_backing_size);
 
-        while let Ok(msg) = self.main_to_rasterizer_receiver.recv() {
+        loop {
+            let msg = self.rasterization_stack.pop();
             debug!("rendering {:?}, tile_size={}", msg.tile_request, self.tile_size);
             let mut cache_pixels =
                 vec![0; tile_backing_size as usize * tile_backing_size as usize * 4];

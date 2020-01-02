@@ -14,6 +14,8 @@ pub mod renderer_advanced;
 pub mod renderer_simple;
 pub mod svg;
 
+mod stack;
+
 // 0123456789abcdef0123456789abcdef
 // yyyyyyyyyyyyyxxxxxxxxxxxxxLlllll
 // \_____ _____/\_____ _____/|\_ _/
