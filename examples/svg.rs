@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate log;
 
+use clap::{App, Arg};
 use env_logger;
 use pathfinder_content::color::ColorF;
 use pathfinder_geometry::rect::RectI;
@@ -14,7 +15,6 @@ use pathfinder_gpu::{BufferData, BufferTarget, BufferUploadMode, ClearOps, Devic
 use pathfinder_gpu::{RenderOptions, RenderState, RenderTarget, TextureFormat, UniformData};
 use pathfinder_gpu::{VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
 use raqote::SolidSource;
-use std::env;
 use std::f32;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
@@ -49,9 +49,23 @@ static QUAD_VERTEX_INDICES: [u32; 6] = [0, 1, 2, 1, 3, 2];
 fn main() {
     env_logger::init();
 
-    let svg_path = match env::args().nth(1) {
-        Some(path) => path,
+    let matches = App::new("svg").arg(Arg::with_name("jobs").short("j")
+                                                            .long("jobs")
+                                                            .value_name("JOBS")
+                                                            .help("Number of rasterization \
+                                                                   threads to use")
+                                                            .takes_value(true))
+                                 .arg(Arg::with_name("INPUT").help("SVG to load").index(1))
+                                 .get_matches();
+
+    let svg_path = match matches.value_of("INPUT") {
+        Some(path) => path.to_owned(),
         None => DEFAULT_SVG_PATH.to_owned(),
+    };
+
+    let thread_count = match matches.value_of("jobs") {
+        None => num_cpus::get_physical() as u32,
+        Some(value) => value.parse().unwrap(),
     };
 
     let mut event_loop = EventsLoop::new();
@@ -94,7 +108,6 @@ fn main() {
     let resources = FilesystemResourceLoader::locate();
 
     // Initialize the raster thread, and wait for the SVG to load.
-    let thread_count = num_cpus::get_physical() as u32;
     let mut rasterizer_proxy = SVGRasterizerProxy::new(svg_path,
                                                        BACKGROUND_COLOR,
                                                        TILE_SIZE,
