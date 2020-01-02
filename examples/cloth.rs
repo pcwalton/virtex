@@ -1,6 +1,7 @@
 // virtex/examples/cloth.rs
 
 use env_logger;
+use num_cpus;
 use pathfinder_content::color::ColorF;
 use pathfinder_geometry::rect::RectI;
 use pathfinder_geometry::transform3d::Transform4F;
@@ -314,7 +315,11 @@ fn main() {
     let derivatives_framebuffer = device.create_framebuffer(derivatives_texture);
 
     // Create the SVG rasterizer.
-    let mut svg_rasterizer_proxy = SVGRasterizerProxy::new(svg_path, BACKGROUND_COLOR, TILE_SIZE);
+    let thread_count = num_cpus::get_physical() as u32;
+    let mut svg_rasterizer_proxy = SVGRasterizerProxy::new(svg_path,
+                                                           BACKGROUND_COLOR,
+                                                           TILE_SIZE,
+                                                           thread_count);
     let svg_size = svg_rasterizer_proxy.wait_for_svg_to_load();
 
     // Enter the main loop.

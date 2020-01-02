@@ -94,7 +94,11 @@ fn main() {
     let resources = FilesystemResourceLoader::locate();
 
     // Initialize the raster thread, and wait for the SVG to load.
-    let mut rasterizer_proxy = SVGRasterizerProxy::new(svg_path, BACKGROUND_COLOR, TILE_SIZE);
+    let thread_count = num_cpus::get_physical() as u32;
+    let mut rasterizer_proxy = SVGRasterizerProxy::new(svg_path,
+                                                       BACKGROUND_COLOR,
+                                                       TILE_SIZE,
+                                                       thread_count);
     let svg_size = rasterizer_proxy.wait_for_svg_to_load();
 
     // Initialize the virtual texture.

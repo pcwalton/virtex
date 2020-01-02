@@ -30,6 +30,7 @@ features = ["raqote-backend"]
 [dev-dependencies]
 env_logger = "0.7"
 gl = "0.6"
+num_cpus = "1"
 
 [dev-dependencies.pathfinder_gl]
 path = "../pathfinder/gl"

@@ -19,48 +19,59 @@ use std::thread::{self, JoinHandle};
 
 pub struct SVGRasterizerProxy {
     rasterization_stack: Arc<ConcurrentStack<TileRasterRequest>>,
-    rasterizer_to_main_receiver: Receiver<RasterizerToMainMsg>,
+    rasterized_tile_receiver: Receiver<RasterizedTile>,
+    svg_size_receiver: Receiver<Vector2I>,
     #[allow(dead_code)]
-    thread: JoinHandle<()>,
+    threads: Vec<JoinHandle<()>>,
 }
 
 struct SVGRasterizerThread {
-    rasterizer_to_main_sender: Sender<RasterizerToMainMsg>,
+    rasterized_tile_sender: Sender<RasterizedTile>,
     rasterization_stack: Arc<ConcurrentStack<TileRasterRequest>>,
+    svg_size_sender: Option<Sender<Vector2I>>,
     svg_path: String,
     background_color: SolidSource,
     tile_size: u32,
 }
 
 impl SVGRasterizerProxy {
-    pub fn new(svg_path: String, background_color: SolidSource, tile_size: u32)
+    pub fn new(svg_path: String, background_color: SolidSource, tile_size: u32, thread_count: u32)
                -> SVGRasterizerProxy {
-        let (rasterizer_to_main_sender,
-             rasterizer_to_main_receiver) = crossbeam_channel::unbounded();
+        let (rasterized_tile_sender, rasterized_tile_receiver) = crossbeam_channel::unbounded();
+        let (svg_size_sender, svg_size_receiver) = crossbeam_channel::unbounded();
+        let mut svg_size_sender = Some(svg_size_sender);
         let rasterization_stack = Arc::new(ConcurrentStack::new());
-        let rasterization_stack_for_thread = rasterization_stack.clone();
-        let thread = thread::spawn(move || {
-            SVGRasterizerThread {
-                rasterization_stack: rasterization_stack_for_thread,
-                rasterizer_to_main_sender,
-                svg_path,
-                background_color,
-                tile_size,
-            }.run()
-        });
-        SVGRasterizerProxy { rasterization_stack, rasterizer_to_main_receiver, thread }
+        let mut threads = vec![];
+        for _ in 0..thread_count {
+            // FIXME(pcwalton): Can we only load the SVG once?
+            let svg_path_for_thread = svg_path.clone();
+            let rasterization_stack_for_thread = rasterization_stack.clone();
+            let rasterized_tile_sender_for_thread = rasterized_tile_sender.clone();
+            let svg_size_sender_for_thread = svg_size_sender.take();
+            threads.push(thread::spawn(move || {
+                SVGRasterizerThread {
+                    rasterization_stack: rasterization_stack_for_thread,
+                    rasterized_tile_sender: rasterized_tile_sender_for_thread,
+                    svg_path: svg_path_for_thread,
+                    svg_size_sender: svg_size_sender_for_thread,
+                    background_color,
+                    tile_size,
+                }.run()
+            }));
+        }
+        SVGRasterizerProxy {
+            rasterization_stack,
+            rasterized_tile_receiver,
+            svg_size_receiver,
+            threads,
+        }
     }
 
     /// Waits for the SVG to load and returns its size.
     ///
     /// This must only be called once, immediately after loading the SVG.
     pub fn wait_for_svg_to_load(&mut self) -> Vector2I {
-        match self.rasterizer_to_main_receiver.recv().unwrap() {
-            RasterizerToMainMsg::SVGLoaded { size } => size,
-            RasterizerToMainMsg::TileRasterized { .. } => {
-                panic!("Called `wait_for_svg_to_load` at an unexpected time!")
-            }
-        }
+        self.svg_size_receiver.recv().unwrap()
     }
 
     pub fn rasterize_needed_tiles<D>(&mut self,
@@ -81,15 +92,8 @@ impl SVGRasterizerProxy {
         }
 
         let tile_backing_size = renderer.manager().texture.tile_backing_size() as i32;
-        while let Ok(msg) = self.rasterizer_to_main_receiver.try_recv() {
-            let (tile_request, tile_origin, new_tile_pixels) = match msg {
-                RasterizerToMainMsg::SVGLoaded { .. } => unreachable!(),
-                RasterizerToMainMsg::TileRasterized {
-                    tile_request,
-                    tile_origin,
-                    new_tile_pixels,
-                } => (tile_request, tile_origin, new_tile_pixels),
-            };
+        while let Ok(msg) = self.rasterized_tile_receiver.try_recv() {
+            let RasterizedTile { tile_request, tile_origin, new_tile_pixels } = msg;
 
             renderer.manager_mut().texture.mark_as_rasterized(tile_request.address,
                                                             &tile_request.descriptor);
@@ -133,15 +137,10 @@ struct TileRasterRequest {
     tile_origin: Vector2I,
 }
 
-enum RasterizerToMainMsg {
-    SVGLoaded {
-        size: Vector2I,
-    },
-    TileRasterized {
-        tile_request: TileRequest,
-        tile_origin: Vector2I,
-        new_tile_pixels: Vec<u8>,
-    },
+struct RasterizedTile {
+    tile_request: TileRequest,
+    tile_origin: Vector2I,
+    new_tile_pixels: Vec<u8>,
 }
 
 impl SVGRasterizerThread {
@@ -154,9 +153,9 @@ impl SVGRasterizerThread {
                                      svg_size.height().ceil() as i32);
         let svg_screen_size = ScreenSize::new(svg_size.x() as u32, svg_size.y() as u32).unwrap();
 
-        self.rasterizer_to_main_sender
-            .send(RasterizerToMainMsg::SVGLoaded { size: svg_size })
-            .unwrap();
+        if let Some(ref svg_size_sender) = self.svg_size_sender {
+            svg_size_sender.send(svg_size).unwrap();
+        }
 
         // Initialize the cache.
         let tile_backing_size = (self.tile_size + 2) as i32;
@@ -206,7 +205,7 @@ impl SVGRasterizerThread {
                 cache_draw_target = DrawTarget::new(tile_backing_size, tile_backing_size);
             }
 
-            self.rasterizer_to_main_sender.send(RasterizerToMainMsg::TileRasterized {
+            self.rasterized_tile_sender.send(RasterizedTile {
                 tile_request: msg.tile_request,
                 tile_origin: msg.tile_origin,
                 new_tile_pixels: cache_pixels,
