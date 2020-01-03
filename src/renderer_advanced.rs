@@ -1,7 +1,7 @@
 // virtex/src/renderer_advanced.rs
 
 use crate::manager::{TileRequest, VirtualTextureManager};
-use crate::texture::{RequestResult, TileDescriptor};
+use crate::texture::{RequestResult, TileCacheStatus, TileDescriptor};
 
 use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
@@ -118,17 +118,19 @@ impl<D> AdvancedRenderer<D> where D: Device {
         self.max_lod = i8::MIN;
 
         for (subtable_index, subtable) in self.manager.texture.cache.subtables.iter().enumerate() {
-            for (bucket_index, &bucket) in subtable.buckets.iter().enumerate() {
-                if bucket.is_empty() {
+            for (bucket_index, bucket) in subtable.buckets.iter().enumerate() {
+                let bucket = match *bucket {
+                    None => continue,
+                    Some(ref bucket) => bucket,
+                };
+
+                let tile_address = bucket.address;
+                let tile = &tiles[tile_address.0 as usize];
+                if tile.status != TileCacheStatus::Rasterized {
                     continue;
                 }
 
-                let tile_address = bucket.address;
-                let tile_descriptor = match &tiles[tile_address.0 as usize].rasterized_descriptor {
-                    None => continue,
-                    Some(tile_descriptor) => tile_descriptor,
-                };
-
+                let tile_descriptor = tile.descriptor.unwrap();
                 let tile_origin = self.manager
                                       .texture
                                       .address_to_tile_coords(tile_address)

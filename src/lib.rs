@@ -10,3 +10,6 @@ pub mod svg;
 pub mod texture;
 
 mod stack;
+
+#[cfg(test)]
+mod tests;
