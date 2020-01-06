@@ -77,10 +77,19 @@ impl VirtualTexture {
     pub fn request_tile(&mut self, tile_descriptor: TileDescriptor) -> RequestResult {
         // If already rasterized, just return it.
         if let Some(tile_address) = self.cache.get(tile_descriptor) {
-            let lru_index = self.lru.iter().enumerate().find(|(_, current_address)| {
+            let lru_index = match self.lru.iter().enumerate().find(|(_, current_address)| {
                 **current_address == tile_address
-            }).expect("Where's the address in the LRU list?").0;
-            self.lru.remove(lru_index);
+            }) {
+                Some((lru_index, _)) => lru_index,
+                None => {
+                    panic!("Failed to find {:?}/{:?} in the LRU list!",
+                           tile_descriptor,
+                           tile_address)
+                }
+            };
+
+            let removed_address = self.lru.remove(lru_index);
+            debug_assert_eq!(removed_address, Some(tile_address));
             self.lru.push_front(tile_address);
 
             let tile = &self.tiles[tile_address.0 as usize];
@@ -122,16 +131,16 @@ impl VirtualTexture {
         // rasterization.
         let mut pending_tile_addresses = vec![];
 
-        let tile_address;
+        let mut tile_address = None;
         loop {
             let candidate_address = match self.lru.pop_back() {
-                None => return None,
+                None => break,
                 Some(address_to_evict) => address_to_evict,
             };
 
             match self.tiles[candidate_address.0 as usize].status {
                 TileCacheStatus::Empty | TileCacheStatus::Rasterized => {
-                    tile_address = candidate_address;
+                    tile_address = Some(candidate_address);
                     break;
                 }
                 TileCacheStatus::Pending => {}
@@ -140,9 +149,14 @@ impl VirtualTexture {
             pending_tile_addresses.push(candidate_address);
         }
 
-        for pending_tile_address in pending_tile_addresses.into_iter().rev() {
+        for pending_tile_address in pending_tile_addresses.into_iter() {
             self.lru.push_back(pending_tile_address);
         }
+
+        let tile_address = match tile_address {
+            None => return None,
+            Some(tile_address) => tile_address,
+        };
 
         let tile = &mut self.tiles[tile_address.0 as usize];
         match tile.status {

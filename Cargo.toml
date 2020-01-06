@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 arrayvec = "0.5"
+cairo-rs = "0.8"
 crossbeam-channel = "0.4"
 log = "0.4"
 rand = "0.7"
@@ -22,14 +23,10 @@ path = "../pathfinder/gpu"
 [dependencies.pathfinder_simd]
 path = "../pathfinder/simd"
 
-[dependencies.raqote]
-git = "https://github.com/jrmuizel/raqote.git"
-rev = "146bd17"
-
 [dependencies.resvg]
 git = "https://github.com/RazrFalcon/resvg.git"
 rev = "0fbbd8ab4bc87821837e71e838fccac9c0e00378"
-features = ["raqote-backend"]
+features = ["cairo-backend"]
 
 [dev-dependencies]
 clap = "2"

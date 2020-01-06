@@ -14,7 +14,6 @@ use pathfinder_gpu::resources::{FilesystemResourceLoader, ResourceLoader};
 use pathfinder_gpu::{BufferData, BufferTarget, BufferUploadMode, ClearOps, Device, Primitive};
 use pathfinder_gpu::{RenderOptions, RenderState, RenderTarget, TextureFormat, UniformData};
 use pathfinder_gpu::{VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
-use raqote::SolidSource;
 use std::f32;
 use surfman::{Connection, ContextAttributeFlags, ContextAttributes, GLVersion as SurfmanGLVersion};
 use surfman::{SurfaceAccess, SurfaceType};
@@ -39,7 +38,7 @@ const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_BACKING_SIZE;
 
 const DERIVATIVES_VIEWPORT_SCALE_FACTOR: i32 = 16;
 
-static BACKGROUND_COLOR: SolidSource = SolidSource { r: 255, g: 255, b: 255, a: 255 };
+static BACKGROUND_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 static DEFAULT_SVG_PATH: &'static str = "resources/svg/Ghostscript_Tiger.svg";
 
@@ -108,8 +107,12 @@ fn main() {
     let resources = FilesystemResourceLoader::locate();
 
     // Initialize the raster thread, and wait for the SVG to load.
+    let background_color = ColorF::new(BACKGROUND_COLOR[0],
+                                       BACKGROUND_COLOR[1],
+                                       BACKGROUND_COLOR[2],
+                                       BACKGROUND_COLOR[3]);
     let mut rasterizer_proxy = SVGRasterizerProxy::new(svg_path,
-                                                       BACKGROUND_COLOR,
+                                                       background_color,
                                                        TILE_SIZE,
                                                        thread_count);
     let svg_size = rasterizer_proxy.wait_for_svg_to_load();

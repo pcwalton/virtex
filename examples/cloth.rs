@@ -14,7 +14,6 @@ use pathfinder_gpu::{ClearOps, DepthFunc, DepthState, Device, Primitive, RenderO
 use pathfinder_gpu::{RenderState, RenderTarget, TextureFormat, TextureDataRef, UniformData};
 use pathfinder_gpu::{VertexAttrClass, VertexAttrDescriptor, VertexAttrType};
 use pathfinder_simd::default::F32x2;
-use raqote::SolidSource;
 use std::env;
 use std::f32::consts::FRAC_PI_2;
 use std::mem;
@@ -72,7 +71,7 @@ const TILE_HASH_INITIAL_BUCKET_SIZE: u32 = 64;
 
 const DERIVATIVES_VIEWPORT_SCALE_FACTOR: i32 = 16;
 
-static BACKGROUND_COLOR: SolidSource = SolidSource { r: 255, g: 255, b: 255, a: 255 };
+static BACKGROUND_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 static QUAD_VERTEX_POSITIONS: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 static QUAD_INDICES:          [u32; 6] = [0, 1, 2, 1, 3, 2];
@@ -316,11 +315,16 @@ fn main() {
 
     // Create the SVG rasterizer.
     let thread_count = num_cpus::get_physical() as u32;
+    let background_color = ColorF::new(BACKGROUND_COLOR[0],
+                                       BACKGROUND_COLOR[1],
+                                       BACKGROUND_COLOR[2],
+                                       BACKGROUND_COLOR[3]);
     let mut svg_rasterizer_proxy = SVGRasterizerProxy::new(svg_path,
-                                                           BACKGROUND_COLOR,
+                                                           background_color,
                                                            TILE_SIZE,
                                                            thread_count);
     let svg_size = svg_rasterizer_proxy.wait_for_svg_to_load();
+    println!("svg size = {:?}", svg_size);
 
     // Enter the main loop.
     let mut needed_tiles = vec![];
