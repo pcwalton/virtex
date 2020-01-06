@@ -11,6 +11,7 @@ uniform int uCacheSeedB;
 uniform int uCacheSize;
 uniform vec2 uTileSize;
 uniform vec2 uLODRange;
+uniform vec4 uBackgroundColor;
 
 in vec2 vTexCoord;
 
@@ -141,7 +142,7 @@ vec4 VTGetColor(sampler2D metadata,
     if (upperFound)
         upperColor = VTSampleColor(metadata, upperMetadataCoord, tileCache, upperScaledTexCoord);
 
-    vec4 fragColor;
+    vec4 fragColor = backgroundColor;
     if (lowerFound && upperFound) {
         float t = (desiredMipLevel - float(lowerMipLevel)) / float(upperMipLevel - lowerMipLevel);
         fragColor = mix(lowerColor, upperColor, t);
@@ -149,9 +150,6 @@ vec4 VTGetColor(sampler2D metadata,
         fragColor = lowerColor;
     } else if (upperFound) {
         fragColor = upperColor;
-    } else {
-        // TODO(pcwalton): Background color.
-        fragColor = vec4(0.0);
     }
     return fragColor;
 }
@@ -164,5 +162,5 @@ void main() {
                             uint(uCacheSeedB),
                             uint(uCacheSize),
                             ivec2(uLODRange),
-                            vec4(0.0));
+                            uBackgroundColor);
 }

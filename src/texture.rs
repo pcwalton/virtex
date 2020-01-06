@@ -2,6 +2,7 @@
 
 //! A sparse virtual texture.
 
+use pathfinder_content::color::ColorF;
 use pathfinder_geometry::vector::Vector2I;
 use rand::{self, Rng};
 use std::collections::VecDeque;
@@ -34,6 +35,7 @@ pub struct VirtualTexture {
     tiles: Vec<TileCacheEntry>,
     next_free_tile: TileAddress,
     cache_texture_size: Vector2I,
+    pub(crate) background_color: ColorF,
     tile_size: u32,
 }
 
@@ -52,7 +54,10 @@ pub enum TileCacheStatus {
 }
 
 impl VirtualTexture {
-    pub fn new(cache_texture_size: Vector2I, tile_size: u32, initial_bucket_size: u32)
+    pub fn new(cache_texture_size: Vector2I,
+               background_color: ColorF,
+               tile_size: u32,
+               initial_bucket_size: u32)
                -> VirtualTexture {
         let mut this = VirtualTexture {
             cache: TileHashTable::new(initial_bucket_size),
@@ -60,6 +65,7 @@ impl VirtualTexture {
             tiles: vec![],
             next_free_tile: TileAddress(0),
             cache_texture_size,
+            background_color,
             tile_size,
         };
 

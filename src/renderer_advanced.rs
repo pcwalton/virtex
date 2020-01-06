@@ -190,6 +190,8 @@ impl<D> AdvancedRenderer<D> where D: Device {
                        UniformData::Vec2(F32x2::splat(self.manager.texture.tile_size() as f32))));
         uniforms.push((&render_uniforms.lod_range_uniform,
                        UniformData::Vec2(F32x2::new(self.min_lod as f32, self.max_lod as f32))));
+        uniforms.push((&render_uniforms.background_color_uniform,
+                       UniformData::Vec4(self.manager.texture.background_color.0)));
     }
 
     pub fn derivatives_viewport(&self) -> RectI {
@@ -222,6 +224,7 @@ pub struct RenderAdvancedUniforms<D> where D: Device {
     cache_size_uniform: D::Uniform,
     tile_size_uniform: D::Uniform,
     lod_range_uniform: D::Uniform,
+    background_color_uniform: D::Uniform,
 }
 
 impl<D> RenderAdvancedUniforms<D> where D: Device {
@@ -233,6 +236,7 @@ impl<D> RenderAdvancedUniforms<D> where D: Device {
         let cache_size_uniform = device.get_uniform(&program, "CacheSize");
         let tile_size_uniform = device.get_uniform(&program, "TileSize");
         let lod_range_uniform = device.get_uniform(&program, "LODRange");
+        let background_color_uniform = device.get_uniform(program, "BackgroundColor");
         RenderAdvancedUniforms {
             metadata_uniform,
             tile_cache_uniform,
@@ -241,6 +245,7 @@ impl<D> RenderAdvancedUniforms<D> where D: Device {
             cache_size_uniform,
             tile_size_uniform,
             lod_range_uniform,
+            background_color_uniform,
         }
     }
 }

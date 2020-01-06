@@ -297,7 +297,12 @@ fn main() {
     // Create the virtual texture.
     let virtual_texture_cache_size = Vector2I::new(TILE_CACHE_WIDTH as i32,
                                                    TILE_CACHE_HEIGHT as i32);
+    let background_color = ColorF::new(BACKGROUND_COLOR[0],
+                                       BACKGROUND_COLOR[1],
+                                       BACKGROUND_COLOR[2],
+                                       BACKGROUND_COLOR[3]);
     let virtual_texture = VirtualTexture::new(virtual_texture_cache_size,
+                                              background_color,
                                               TILE_SIZE,
                                               TILE_HASH_INITIAL_BUCKET_SIZE);
     let virtual_texture_manager = VirtualTextureManager::new(virtual_texture,
@@ -315,10 +320,6 @@ fn main() {
 
     // Create the SVG rasterizer.
     let thread_count = num_cpus::get_physical() as u32;
-    let background_color = ColorF::new(BACKGROUND_COLOR[0],
-                                       BACKGROUND_COLOR[1],
-                                       BACKGROUND_COLOR[2],
-                                       BACKGROUND_COLOR[3]);
     let mut svg_rasterizer_proxy = SVGRasterizerProxy::new(svg_path,
                                                            background_color,
                                                            TILE_SIZE,

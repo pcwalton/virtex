@@ -121,6 +121,7 @@ fn main() {
     // FIXME(pcwalton): Bad API. This should take the *number* of tiles across and down.
     let cache_texture_size = Vector2I::new(TILE_CACHE_WIDTH as i32, TILE_CACHE_HEIGHT as i32);
     let virtual_texture = VirtualTexture::new(cache_texture_size,
+                                              background_color,
                                               TILE_SIZE,
                                               TILE_HASH_INITIAL_BUCKET_SIZE);
 
