@@ -63,8 +63,8 @@ const DEBUG_VIEWPORT_SCALE: i32 = 5;
 const TILE_SIZE: u32 = 256;
 // FIXME(pcwalton): Don't hardcode this.
 const TILE_BACKING_SIZE: u32 = 258;
-const CACHE_TILES_ACROSS: u32 = 16;
-const CACHE_TILES_DOWN: u32 = 16;
+const CACHE_TILES_ACROSS: u32 = 32;
+const CACHE_TILES_DOWN: u32 = 32;
 const TILE_CACHE_WIDTH: u32 = CACHE_TILES_ACROSS * TILE_BACKING_SIZE;
 const TILE_CACHE_HEIGHT: u32 = CACHE_TILES_DOWN * TILE_BACKING_SIZE;
 const TILE_HASH_INITIAL_BUCKET_SIZE: u32 = 64;
@@ -327,11 +327,14 @@ fn main() {
     let svg_size = svg_rasterizer_proxy.wait_for_svg_to_load();
     println!("svg size = {:?}", svg_size);
 
-    // Enter the main loop.
+    // Prepare to enter the main loop.
+    let mut texture_data_receiver = None;
     let mut needed_tiles = vec![];
     let (mut camera_angle, mut camera_distance) = (FRAC_PI_2, INITIAL_CAMERA_DISTANCE);
     let mut time = 0.0;
     let mut exit = false;
+
+    // Enter the main loop.
     while !exit {
         // Calculate view.
         let aspect = WINDOW_WIDTH as f32 / WINDOW_HEIGHT as f32;
@@ -413,46 +416,56 @@ fn main() {
             }
         }
 
-        // Prepare to draw the cloth.
-        let mut uniforms = vec![
-            (&cloth_render_prepare_program.cloth_render_program_info.transform_uniform,
-             UniformData::Mat4([transform.c0, transform.c1, transform.c2, transform.c3])),
-            (&cloth_render_prepare_program.cloth_render_program_info.texture_size_uniform,
-             UniformData::Vec2(svg_size.to_f32().0)),
-            (&cloth_render_prepare_program.cloth_render_program_info.vertex_positions_uniform,
-             UniformData::TextureUnit(0)),
-            (&cloth_render_prepare_program.cloth_render_program_info.vertex_positions_size_uniform,
-             UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
-        ];
-        virtual_texture_renderer.push_prepare_uniforms(
-            &cloth_render_prepare_program.virtex_uniforms,
-            &mut uniforms);
-        device.draw_elements(cloth_render_indices.len() as u32, &RenderState {
-            target: &RenderTarget::Framebuffer(&derivatives_framebuffer),
-            program: &cloth_render_prepare_program.program,
-            vertex_array: &cloth_render_prepare_vertex_array,
-            primitive: if DRAW_LINES { Primitive::Lines } else { Primitive::Triangles },
-            uniforms: &uniforms,
-            textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
-            viewport: virtual_texture_renderer.derivatives_viewport(),
-            options: RenderOptions {
-                clear_ops: ClearOps {
-                    color: Some(ColorF::new(0.0, 0.0, 0.0, 0.0)),
-                    ..ClearOps::default()
-                },
-                depth: None,
-                ..RenderOptions::default()
-            }
-        });
-        let texture_data = device.read_pixels(&RenderTarget::Framebuffer(&derivatives_framebuffer),
-                                              virtual_texture_renderer.derivatives_viewport());
+        // Prepare to draw the cloth, if necessary.
+        if texture_data_receiver.is_none() {
+            let mut uniforms = vec![
+                (&cloth_render_prepare_program.cloth_render_program_info.transform_uniform,
+                 UniformData::Mat4([transform.c0, transform.c1, transform.c2, transform.c3])),
+                (&cloth_render_prepare_program.cloth_render_program_info.texture_size_uniform,
+                 UniformData::Vec2(svg_size.to_f32().0)),
+                (&cloth_render_prepare_program.cloth_render_program_info.vertex_positions_uniform,
+                 UniformData::TextureUnit(0)),
+                (&cloth_render_prepare_program.cloth_render_program_info
+                                              .vertex_positions_size_uniform,
+                 UniformData::Vec2(vertex_position_texture_size.to_f32().0)),
+            ];
+            virtual_texture_renderer.push_prepare_uniforms(
+                &cloth_render_prepare_program.virtex_uniforms,
+                &mut uniforms);
+            device.draw_elements(cloth_render_indices.len() as u32, &RenderState {
+                target: &RenderTarget::Framebuffer(&derivatives_framebuffer),
+                program: &cloth_render_prepare_program.program,
+                vertex_array: &cloth_render_prepare_vertex_array,
+                primitive: if DRAW_LINES { Primitive::Lines } else { Primitive::Triangles },
+                uniforms: &uniforms,
+                textures: &[device.framebuffer_texture(&vertex_position_framebuffer)],
+                viewport: virtual_texture_renderer.derivatives_viewport(),
+                options: RenderOptions {
+                    clear_ops: ClearOps {
+                        color: Some(ColorF::new(0.0, 0.0, 0.0, 0.0)),
+                        ..ClearOps::default()
+                    },
+                    depth: None,
+                    ..RenderOptions::default()
+                }
+            });
+
+            texture_data_receiver =
+                Some(device.read_pixels(&RenderTarget::Framebuffer(&derivatives_framebuffer),
+                                        virtual_texture_renderer.derivatives_viewport()));
+        }
+
         device.end_commands();
 
         // Determine which tiles we need to rasterize, and rasterize them.
-        virtual_texture_renderer.request_needed_tiles(&texture_data, &mut needed_tiles);
-        svg_rasterizer_proxy.rasterize_needed_tiles(&device,
-                                                    &mut virtual_texture_renderer,
-                                                    &mut needed_tiles);
+        if let Some(texture_data) =
+                device.try_recv_texture_data(texture_data_receiver.as_ref().unwrap()) {
+            virtual_texture_renderer.request_needed_tiles(&texture_data, &mut needed_tiles);
+            svg_rasterizer_proxy.rasterize_needed_tiles(&device,
+                                                        &mut virtual_texture_renderer,
+                                                        &mut needed_tiles);
+            texture_data_receiver = None;
+        }
 
         // Update metadata in preparation to draw the cloth.
         virtual_texture_renderer.update_metadata(&device);
